@@ -7,6 +7,8 @@
 
 Building an MCP server by hand means learning one more protocol, structuring tool schemas and handling transport and authentication. mcp-forge does that work for you: point it at a source, get a ready-to-run `server.py`, then score it with the built-in evaluator to see what still needs your attention.
 
+> This repository hosts the documentation and changelog. Install the package from [PyPI](https://pypi.org/project/vulcai-mcp-forge-cli/).
+
 <!-- Demo GIF: add it here as ![mcp-forge demo](docs/demo.gif) -->
 
 ## Quick start
@@ -104,4 +106,4 @@ Agents such as Claude or Cursor can also generate servers directly, by passing o
 
 ## License
 
-The CLI is distributed on PyPI under the MIT license.
+This repository contains documentation only. The CLI package is published on PyPI under the MIT license, as stated in its package metadata.
