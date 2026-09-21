@@ -11,6 +11,35 @@ Changes to the public MCP server are tracked in the
 
 ---
 
+## [0.2.5] - 2026-09-22
+
+### Added
+
+- MIT licence shipped with the package and declared in its metadata, so PyPI shows
+  it in the project sidebar. A `LICENSE` file is also available in this repository.
+
+### Documentation
+
+- The README licence link is now absolute, so it works on the PyPI page.
+
+## [0.2.4] - 2026-09-21
+
+### Added
+
+- `mcp-forge evaluate` now automatically selects the best Groq model your
+  `GROQ_API_KEY` can use, since Groq retires models over time. Set `GROQ_MODEL`
+  to force a specific model.
+
+### Fixed
+
+- `mcp-forge --version` always printed `0.1.0`. It now reports the installed version.
+- Error messages for quota and missing licence pointed to a domain we do not own.
+  They now point to https://mcp-forge.vulcai.io and contact@vulcai.io.
+
+### Changed
+
+- The "Changelog" link on the PyPI page now points to this repository.
+
 ## [0.2.3] - 2026-07-20
 
 ### Documentation
@@ -76,6 +105,8 @@ Upgrade with `pip install -U vulcai-mcp-forge-cli`.
 Initial public releases, 0.1.0 to 0.1.25 (published between 2026-05-04 and
 2026-05-21): parsers, template generation and CLI foundations.
 
+[0.2.5]: https://pypi.org/project/vulcai-mcp-forge-cli/0.2.5/
+[0.2.4]: https://pypi.org/project/vulcai-mcp-forge-cli/0.2.4/
 [0.2.3]: https://pypi.org/project/vulcai-mcp-forge-cli/0.2.3/
 [0.2.2]: https://pypi.org/project/vulcai-mcp-forge-cli/0.2.2/
 [0.2.1]: https://pypi.org/project/vulcai-mcp-forge-cli/0.2.1/
