@@ -86,6 +86,7 @@ Source analysis runs locally. To enrich and generate the server, the CLI sends t
 - JavaScript-heavy sites and single-page apps need the web extra: `pip install "vulcai-mcp-forge-cli[web]"` then `playwright install chromium`.
 - GraphQL generation needs introspection to be enabled on the endpoint.
 - If a generation returns 0 tools, see the [troubleshooting guide](https://mcp-forge.vulcai.io/docs/troubleshooting/no-tools).
+- COBOL: only *modern, isolated* subprograms are executed — a `PROGRAM-ID` with an explicit `PROCEDURE DIVISION USING <inputs...> <output>.` clause. Legacy monolithic COBOL (a single `PROCEDURE DIVISION` of paragraphs sharing global `WORKING-STORAGE` state) is detected but returns an explicit error per tool rather than a guessed result, since isolating one paragraph's inputs/outputs from shared mutable state can't be done reliably without risking a silently wrong answer.
 
 ## Access
 

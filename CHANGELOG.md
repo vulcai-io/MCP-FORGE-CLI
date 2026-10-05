@@ -11,6 +11,25 @@ Changes to the public MCP server are tracked in the
 
 ---
 
+## [Unreleased]
+
+### Added
+
+- COBOL codebase analysis now executes *modern, isolated* subprograms
+  (`PROGRAM-ID` with an explicit `PROCEDURE DIVISION USING <inputs...>
+  <output>.` clause) end to end via GnuCOBOL.
+
+### Documentation
+
+- Clarified that legacy monolithic COBOL (a single `PROCEDURE DIVISION`
+  of paragraphs sharing global `WORKING-STORAGE` state) is detected but
+  intentionally returns an explicit error instead of a guessed result —
+  isolating one paragraph's inputs/outputs from shared mutable state
+  can't be done reliably without risking a silently wrong answer.
+- Fixed CLI discovery: positional arguments from a tool's `--help` were
+  sometimes marked required even when the tool documents an alternate,
+  argument-less usage form (e.g. `git log`, `git fetch`, `git branch`).
+
 ## [0.2.5] - 2026-09-22
 
 ### Added
