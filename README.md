@@ -105,6 +105,10 @@ Agents such as Claude or Cursor can also generate servers directly, by passing o
 - [Troubleshooting](https://mcp-forge.vulcai.io/docs/troubleshooting/no-tools)
 - [MCP server repository](https://github.com/vulcai-io/MCP-FORGE-MCP-SERVEUR)
 
+This repo mirrors the public parts of the PyPI package (CLI, parsing,
+discovery) under `src/`. The generation and LLM enrichment engines are
+closed-source and run via Vulcai's API.
+
 ## License
 
 This repository contains documentation only. The CLI package is published on PyPI under the MIT license, as stated in its package metadata.

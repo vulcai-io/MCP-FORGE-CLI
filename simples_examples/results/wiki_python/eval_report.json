@@ -1,0 +1,45 @@
+{
+  "score_global": 8.4,
+  "scores_par_critere": {
+    "structure": 9.0,
+    "coverage": 8.0,
+    "auth": 9.5,
+    "docs": 8.5,
+    "fidelity": 8.5,
+    "robustness": 7.5
+  },
+  "points_forts": [
+    "Full OAuth 2.0 Authorization Code + PKCE (S256) implementation with rate limiting, redirect URI whitelist, and secure token comparison via secrets.compare_digest",
+    "Clean and consistent error handling across all tools: TimeoutException and RequestError are both caught and return user-friendly messages",
+    "BeautifulSoup HTML parsing with noise tag removal (script, style, nav, footer) produces clean, LLM-readable text output",
+    "Well-structured FastMCP tool definitions with clear docstrings describing args and return values",
+    "Per-request token isolation via ContextVar prevents cross-request token leakage in async context",
+    "_TokenMiddleware correctly extracts Bearer tokens from both Authorization header and query string fallback",
+    "Search tool correctly filters out None and empty-string params before building query string, avoiding unintended API behavior"
+  ],
+  "bugs_critiques": [
+    {
+      "description": "The _request_token ContextVar is set in _TokenMiddleware but the handle_sse function reads it with _request_token.get() synchronously before the async SSE connection is established. In an async context with Starlette/uvicorn, ContextVar propagation across async boundaries depends on the task context. If the SSE handler runs in a different asyncio Task than the middleware, the token will not be visible and _MCP_SERVER_TOKEN checks will always fail, blocking all SSE connections.",
+      "ligne": null,
+      "severite": "majeur"
+    },
+    {
+      "description": "The unused import of ContextVar (_request_token) is defined at module level but only actually used in the __main__ block's handle_sse and _TokenMiddleware. While not a crash, _request_token is declared with ContextVar at module level which is correct, but its .set() is only called inside _TokenMiddleware which is only instantiated in __main__. Tools themselves never use the token, so authentication of tool calls depends entirely on handle_sse — if the SSE token check fails silently (see above bug), tools are unprotected.",
+      "ligne": 14,
+      "severite": "mineur"
+    },
+    {
+      "description": "html.parser is used instead of lxml for BeautifulSoup. While functional, html.parser can fail or produce unexpected results on malformed Wikipedia HTML. This is a robustness concern rather than a crash, but could yield garbled text for some articles.",
+      "ligne": null,
+      "severite": "mineur"
+    }
+  ],
+  "ameliorations_prioritaires": [
+    "Verify ContextVar token propagation in the async SSE handler: consider passing the token explicitly or ensuring _TokenMiddleware and handle_sse share the same asyncio Task context to guarantee the Bearer token is readable when needed",
+    "Add slug input validation (e.g., reject empty string, overly long slugs, or path traversal characters like '..') in get_wiki_page, list_wiki_links_here, and list_wiki_recent_changes before constructing the URL",
+    "Consider switching BeautifulSoup parser from 'html.parser' to 'lxml' for more robust HTML parsing of potentially malformed Wikipedia pages",
+    "Cap and sanitize the text returned by all tools (e.g., truncate at a reasonable character limit) to avoid overwhelming the LLM context window with very large Wikipedia articles",
+    "Add a tool to retrieve Wikipedia article metadata (revision, categories, last modified) via the MediaWiki API (/api.php) to complement content retrieval"
+  ],
+  "verdict_beta": "This is a well-crafted MCP server with a clean structure, solid OAuth 2.0 + PKCE security layer, and consistent error handling across all tools. The Wikipedia scraping approach using BeautifulSoup is functional and produces readable output. The main concern is a potential ContextVar propagation issue in the async SSE handler that could silently break token-based authentication for all tool calls. Additionally, slug inputs lack any validation, which is a minor but real attack surface. With these issues addressed, this server would be production-ready. Overall a strong beta output from mcp-forge."
+}

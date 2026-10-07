@@ -1,0 +1,45 @@
+{
+  "score_global": 8.5,
+  "scores_par_critere": {
+    "structure": 9.0,
+    "coverage": 8.5,
+    "auth": 9.5,
+    "docs": 8.0,
+    "fidelity": 8.5,
+    "robustness": 7.5
+  },
+  "points_forts": [
+    "Architecture originale et bien pensée : appel de fonctions Julia via subprocess avec gestion correcte des littéraux (chaînes en guillemets doubles, booléens, None → nothing)",
+    "La fonction _to_julia_literal couvre tous les types utiles et évite les pièges classiques (guillemets simples Julia = Char, pas String)",
+    "OAuth 2.0 + PKCE complet et robuste : rate limiting, whitelist des redirect_uri, nettoyage des codes expirés, compare_digest constant-time",
+    "_TokenMiddleware gère correctement l'extraction du bearer token depuis l'en-tête Authorization ET le query-string",
+    "Vérification de disponibilité de Julia (shutil.which) avant chaque appel, avec retour d'erreur explicite",
+    "Timeout de 30s sur les appels subprocess : adapté au démarrage de la JVM Julia",
+    "Utilisation de --startup-file=no pour accélérer les invocations Julia et éviter les effets de bord"
+  ],
+  "bugs_critiques": [
+    {
+      "description": "handle_sse lit _request_token.get() AVANT que le middleware _TokenMiddleware ne l'ait défini pour la requête courante. Le ContextVar est initialisé à \"\" par défaut, donc si le token est passé tardivement ou si le contexte async diverge, la vérification peut échouer ou passer silencieusement. Ce comportement dépend de l'ordre d'exécution ASGI — à risque mais non garanti bloquant selon la version d'uvicorn.",
+      "ligne": null,
+      "severite": "mineur"
+    },
+    {
+      "description": "La liste `numbers: list` dans sum_list n'est pas typée (list[float] ou list[int]). Si le LLM passe une liste mixte ou contenant des chaînes, _to_julia_literal sérialisera les chaînes avec json.dumps, produisant un tableau Julia hétérogène qui fera planter sum_list côté Julia. Pas de validation préalable du contenu de la liste.",
+      "ligne": null,
+      "severite": "mineur"
+    },
+    {
+      "description": "Le chemin include_path est construit avec os.path.join puis .replace('\\\\', '/') — cette approche fonctionne sur Windows mais le chemin passé à Julia via -e peut contenir des espaces ou des caractères spéciaux non échappés, potentiellement brisant l'expression Julia si le répertoire source contient des caractères inhabituels.",
+      "ligne": null,
+      "severite": "mineur"
+    }
+  ],
+  "ameliorations_prioritaires": [
+    "Typer strictement le paramètre numbers en list[float] ou list[int | float] et valider son contenu avant la sérialisation Julia pour éviter des erreurs silencieuses côté Julia",
+    "Mutualiser la logique de construction et d'appel Julia (include_path, julia_code, subprocess.run) dans une fonction _call_julia(func_name, *args) pour éliminer la duplication de code entre les 4 outils",
+    "Ajouter une validation des entrées numériques (ex: n >= 0 pour factorial, n > 0 pour is_prime) directement dans Python avant d'invoquer Julia, pour produire des messages d'erreur clairs côté MCP",
+    "Documenter la variable d'environnement JULIA_SOURCE_DIR dans le README ou les commentaires de démarrage",
+    "Envisager un cache de session Julia (ex: julia daemon ou PackageCompiler sysimage) pour réduire la latence de démarrage JVM à chaque appel subprocess"
+  ],
+  "verdict_beta": "Serveur MCP de qualité solide pour un cas d'usage original (bridge Python→Julia via subprocess). L'architecture OAuth/PKCE est complète et sécurisée. Le cœur fonctionnel est bien conçu avec _to_julia_literal. Les seuls points faibles sont mineurs : duplication de code entre les 4 outils, absence de validation des types de liste, et le paramètre `numbers: list` non typé. Aucun bug bloquant détecté. Recommandé pour beta avec les améliorations mineures listées."
+}

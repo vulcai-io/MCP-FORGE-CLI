@@ -1,0 +1,218 @@
+[
+  {
+    "label": "CLI tool",
+    "slug": "git_cli",
+    "eval_score": 8.4,
+    "tools_count": 22,
+    "source": "git",
+    "run_file": "_raw_results_mcp-forge-output-20.json"
+  },
+  {
+    "label": "Codebase bash_lang",
+    "slug": "bash_utils",
+    "eval_score": 8.5,
+    "tools_count": 4,
+    "source": "./codebases/bash_lang",
+    "run_file": "_raw_results_mcp-forge-output-15.json"
+  },
+  {
+    "label": "Codebase c_cpp",
+    "slug": "c_cpp_utils",
+    "eval_score": 8.5,
+    "tools_count": 4,
+    "source": "./codebases/c_cpp",
+    "run_file": "_raw_results_mcp-forge-output-10.json"
+  },
+  {
+    "label": "Codebase cobol",
+    "slug": "cobol_utils",
+    "eval_score": 8.4,
+    "tools_count": 3,
+    "source": "./codebases/cobol",
+    "run_file": "_raw_results_mcp-forge-output-19.json"
+  },
+  {
+    "label": "Codebase csharp",
+    "slug": "csharp_utils",
+    "eval_score": 8.4,
+    "tools_count": 4,
+    "source": "./codebases/csharp",
+    "run_file": "_raw_results_mcp-forge-output-15.json"
+  },
+  {
+    "label": "Codebase dart",
+    "slug": "dart_utils",
+    "eval_score": 8.5,
+    "tools_count": 4,
+    "source": "./codebases/dart",
+    "run_file": "_raw_results_stability-1.json"
+  },
+  {
+    "label": "Codebase elixir",
+    "slug": "elixir_utils",
+    "eval_score": 8.4,
+    "tools_count": 4,
+    "source": "./codebases/elixir",
+    "run_file": "_raw_results_mcp-forge-output-15.json"
+  },
+  {
+    "label": "Codebase fortran",
+    "slug": "fortran_utils",
+    "eval_score": 8.2,
+    "tools_count": 4,
+    "source": "./codebases/fortran",
+    "run_file": "_raw_results_mcp-forge-output-15.json"
+  },
+  {
+    "label": "Codebase go",
+    "slug": "go_utils",
+    "eval_score": 8.4,
+    "tools_count": 4,
+    "source": "./codebases/go",
+    "run_file": "_raw_results_stability-3.json"
+  },
+  {
+    "label": "Codebase groovy",
+    "slug": "groovy_utils",
+    "eval_score": 8.5,
+    "tools_count": 4,
+    "source": "./codebases/groovy",
+    "run_file": "_raw_results_stability-1.json"
+  },
+  {
+    "label": "Codebase java",
+    "slug": "java_utils",
+    "eval_score": 8.4,
+    "tools_count": 4,
+    "source": "./codebases/java",
+    "run_file": "_raw_results_mcp-forge-output-22.json"
+  },
+  {
+    "label": "Codebase javascript",
+    "slug": "javascript_utils",
+    "eval_score": 8.4,
+    "tools_count": 4,
+    "source": "./codebases/javascript",
+    "run_file": "_raw_results_mcp-forge-output-15.json"
+  },
+  {
+    "label": "Codebase julia",
+    "slug": "julia_utils",
+    "eval_score": 8.5,
+    "tools_count": 4,
+    "source": "./codebases/julia",
+    "run_file": "_raw_results_stability-4.json"
+  },
+  {
+    "label": "Codebase kotlin",
+    "slug": "kotlin_utils",
+    "eval_score": 8.5,
+    "tools_count": 4,
+    "source": "./codebases/kotlin",
+    "run_file": "_raw_results_stability-7.json"
+  },
+  {
+    "label": "Codebase lua",
+    "slug": "lua_utils",
+    "eval_score": 8.5,
+    "tools_count": 4,
+    "source": "./codebases/lua",
+    "run_file": "_raw_results_stability-4.json"
+  },
+  {
+    "label": "Codebase php",
+    "slug": "php_utils",
+    "eval_score": 8.7,
+    "tools_count": 4,
+    "source": "./codebases/php",
+    "run_file": "_raw_results_stability-2.json"
+  },
+  {
+    "label": "Codebase powershell",
+    "slug": "powershell_utils",
+    "eval_score": 8.4,
+    "tools_count": 4,
+    "source": "./codebases/powershell",
+    "run_file": "_raw_results_mcp-forge-output-15.json"
+  },
+  {
+    "label": "Codebase python",
+    "slug": "python_utils",
+    "eval_score": 8.5,
+    "tools_count": 4,
+    "source": "./codebases/python",
+    "run_file": "_raw_results_mcp-forge-output-11.json"
+  },
+  {
+    "label": "Codebase r_lang",
+    "slug": "r_lang_utils",
+    "eval_score": 8.5,
+    "tools_count": 4,
+    "source": "./codebases/r_lang",
+    "run_file": "_raw_results_stability-2.json"
+  },
+  {
+    "label": "Codebase ruby",
+    "slug": "ruby_utils",
+    "eval_score": 8.5,
+    "tools_count": 4,
+    "source": "./codebases/ruby",
+    "run_file": "_raw_results_stability-1.json"
+  },
+  {
+    "label": "Codebase rust",
+    "slug": "rust_utils",
+    "eval_score": 8.2,
+    "tools_count": 4,
+    "source": "./codebases/rust",
+    "run_file": "_raw_results_mcp-forge-output-15.json"
+  },
+  {
+    "label": "Codebase scala",
+    "slug": "scala_utils",
+    "eval_score": 8.5,
+    "tools_count": 4,
+    "source": "./codebases/scala",
+    "run_file": "_raw_results_stability-2.json"
+  },
+  {
+    "label": "Codebase swift",
+    "slug": "swift_utils",
+    "eval_score": 8.7,
+    "tools_count": 4,
+    "source": "./codebases/swift",
+    "run_file": "_raw_results_stability-2.json"
+  },
+  {
+    "label": "Codebase typescript",
+    "slug": "typescript_utils",
+    "eval_score": 8.7,
+    "tools_count": 4,
+    "source": "./codebases/typescript",
+    "run_file": "_raw_results_stability-2.json"
+  },
+  {
+    "label": "GraphQL",
+    "slug": "reference_geography_api",
+    "eval_score": 8.7,
+    "tools_count": 6,
+    "source": "https://countries.trevorblades.com/graphql",
+    "run_file": "_raw_results_mcp-forge-output-8.json"
+  },
+  {
+    "label": "OpenAPI",
+    "slug": "petstore_api",
+    "eval_score": 8.5,
+    "tools_count": 19,
+    "source": "https://petstore3.swagger.io/api/v3/openapi.json",
+    "run_file": "_raw_results_mcp-forge-output-5.json"
+  },
+  {
+    "label": "Website",
+    "slug": "wiki_python",
+    "eval_score": 8.4,
+    "tools_count": 5,
+    "source": "https://en.wikipedia.org/wiki/Python_(programming_language)",
+    "run_file": "_raw_results_mcp-forge-output-24.json"
+  }
+]

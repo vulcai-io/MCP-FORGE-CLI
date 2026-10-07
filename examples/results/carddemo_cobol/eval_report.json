@@ -1,0 +1,50 @@
+{
+  "score_global": 7.2,
+  "scores_par_critere": {
+    "structure": 8.5,
+    "coverage": 6.0,
+    "auth": 9.0,
+    "docs": 7.5,
+    "fidelity": 7.0,
+    "robustness": 6.5
+  },
+  "points_forts": [
+    "OAuth 2.0 Authorization Code + PKCE complet avec rate limiting, whitelist redirect_uri, et CORS correctement configuré",
+    "Gestion transparente et honnête des unités COBOL monolithiques : retour d'erreur explicite plutôt que simulation d'exécution",
+    "Contournement documenté du bug GnuCOBOL/MSYS2 sur Windows (COB_CONFIG_DIR) avec logique de dérivation robuste",
+    "Littéraux COBOL construits de façon sûre (_cobol_string_literal avec troncature + échappement des guillemets, format FREE pour éviter la limite colonne 72)",
+    "Nettoyage systématique des fichiers temporaires dans le bloc finally",
+    "_request_token via ContextVar : isolation correcte par tâche async",
+    "Docstrings complets sur tous les outils MCP avec description des paramètres et valeurs de retour"
+  ],
+  "bugs_critiques": [
+    {
+      "description": "handle_sse vérifie `_request_token.get()` AVANT que _TokenMiddleware ait pu le setter pour cette requête SSE. Le middleware Starlette est appliqué après le routage dans certains cas, ce qui peut entraîner une vérification sur le token de la tâche précédente (valeur par défaut '') plutôt que le token extrait de la requête courante.",
+      "ligne": null,
+      "severite": "majeur"
+    },
+    {
+      "description": "subprocess.run([tmp_bin], ...) avec shell=True sur Windows exécute une chaîne, mais tmp_bin est un chemin qui peut contenir des espaces (répertoire temp système). Sur Windows, `[tmp_bin]` avec shell=True est converti en chaîne sans guillemets autour du chemin, ce qui peut provoquer une erreur d'exécution si le chemin contient des espaces.",
+      "ligne": null,
+      "severite": "majeur"
+    },
+    {
+      "description": "Un seul outil COBOL réellement exécutable (call_csutldtc) sur 6 déclarés. Les 5 autres retournent systématiquement une erreur, ce qui représente une couverture fonctionnelle très limitée pour les besoins d'intégration COBOL annoncés.",
+      "ligne": null,
+      "severite": "mineur"
+    },
+    {
+      "description": "Dans _cobc_env(), la variable compile_result est vérifiée avec returncode != 0 mais le code ne vérifie pas si tmp_bin existe réellement après compilation (cobc peut retourner 0 sans créer le binaire dans certains cas edge). Aucune vérification os.path.exists(tmp_bin) avant l'exécution.",
+      "ligne": null,
+      "severite": "mineur"
+    }
+  ],
+  "ameliorations_prioritaires": [
+    "Vérifier l'ordre d'exécution du middleware _TokenMiddleware par rapport au handler SSE : s'assurer que le token est bien extrait et setté dans le ContextVar avant que handle_sse ne le lise, notamment pour les connexions SSE longue durée",
+    "Protéger les chemins avec espaces sur Windows lors de l'appel subprocess avec shell=True : utiliser des guillemets autour de tmp_bin ou préférer shell=False avec une liste de commandes",
+    "Ajouter une vérification os.path.exists(tmp_bin) après compilation avant de lancer l'exécution, pour capturer les cas où cobc retourne 0 sans produire de binaire",
+    "Élargir la couverture : identifier et implémenter d'autres sous-programmes COBOL isolés (PROCEDURE DIVISION USING) plutôt que de se limiter à CSUTLDTC",
+    "Considérer un mécanisme de cache des binaires compilés pour les appels répétés aux mêmes sous-programmes COBOL (éviter recompilation à chaque appel)"
+  ],
+  "verdict_beta": "Serveur MCP fonctionnel et bien architecturé pour son domaine (intégration COBOL legacy). L'infrastructure OAuth/PKCE est complète et sécurisée. La gestion honnête des unités COBOL non-isolées est un vrai point fort. Deux bugs majeurs méritent correction avant mise en production : la synchronisation token/middleware SSE et la gestion des chemins avec espaces sur Windows. La couverture fonctionnelle réelle est faible (1 seul outil véritablement exécutable), ce qui est une limitation inhérente aux sources COBOL monolithiques mais devrait être documentée plus prominement. Recommandé pour beta avec les correctifs cités."
+}

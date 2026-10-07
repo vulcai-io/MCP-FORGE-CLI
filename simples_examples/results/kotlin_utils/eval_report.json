@@ -1,0 +1,45 @@
+{
+  "score_global": 8.5,
+  "scores_par_critere": {
+    "structure": 9.0,
+    "coverage": 8.5,
+    "auth": 9.5,
+    "docs": 8.5,
+    "fidelity": 9.0,
+    "robustness": 7.0
+  },
+  "points_forts": [
+    "Architecture très propre avec extraction de la logique commune dans _run_script() et _to_literal(), évitant la répétition de code entre les outils.",
+    "OAuth 2.0 Authorization Code + PKCE (S256) complet avec rate limiting, validation redirect_uri, et protection contre les open redirects.",
+    "Gestion robuste des fichiers temporaires avec try/finally garantissant le nettoyage même en cas d'erreur.",
+    "Compatibilité Windows correctement gérée via shell=(os.name == 'nt') pour les interpréteurs installés comme scripts .bat/.cmd.",
+    "Configuration externalisée via variables d'environnement (KOTLIN_SOURCE_DIR, MCP_SERVER_TOKEN, MCP_SERVER_URL) pour faciliter le déploiement.",
+    "Documentation des outils claire et bien structurée avec Args et description fonctionnelle utile pour un LLM.",
+    "_to_literal() gère correctement les types Python courants (bool, int, float, str, list/tuple, None) en littéraux Kotlin valides."
+  ],
+  "bugs_critiques": [
+    {
+      "description": "handle_sse() lit _request_token.get() avant que _TokenMiddleware ne l'ait défini pour la requête courante. Le middleware est appliqué sur l'app Starlette entière via uvicorn.run(_TokenMiddleware(starlette_app)), donc il s'exécute bien avant la route — ce n'est pas un bug réel dans ce cas précis. Toutefois, si le token est extrait depuis la query string avec urllib.parse.unquote, les tokens contenant des caractères encodés (%2B, etc.) seraient mal interprétés car le parsing manuel via split('&') et part[6:] ne décode pas l'URL.",
+      "ligne": null,
+      "severite": "mineur"
+    },
+    {
+      "description": "Dans _to_literal(), les valeurs de type dict (objets Python) sont sérialisées via json.dumps(), produisant du JSON valide mais pas un littéral Kotlin valide (mapOf(...) serait correct). Cela peut provoquer une erreur à l'exécution si un paramètre de type dict est passé à un outil.",
+      "ligne": null,
+      "severite": "majeur"
+    },
+    {
+      "description": "Le timeout de subprocess.run est fixé à 20 secondes, mais le démarrage de la JVM pour kotlinc/kotlin peut régulièrement dépasser ce délai sur des machines lentes ou à froid, causant un TimeoutExpired non géré qui remonterait jusqu'au MCP client sans message d'erreur utile.",
+      "ligne": null,
+      "severite": "majeur"
+    }
+  ],
+  "ameliorations_prioritaires": [
+    "Entourer subprocess.run() d'un try/except subprocess.TimeoutExpired pour retourner un message d'erreur clair ('Timeout: l'exécution Kotlin a dépassé 20s') plutôt qu'une exception non gérée.",
+    "Corriger _to_literal() pour les dicts : générer mapOf(\"key\" to value, ...) au lieu de json.dumps() afin de produire un littéral Kotlin syntaxiquement valide.",
+    "Ajouter urllib.parse.unquote() lors de l'extraction du token depuis la query string dans _TokenMiddleware pour supporter les tokens encodés URL.",
+    "Envisager d'augmenter le timeout à 60s ou de le rendre configurable via variable d'environnement (KOTLIN_TIMEOUT) pour tenir compte du démarrage lent de la JVM.",
+    "Ajouter une validation du paramètre 'n' dans check_prime et calculate_factorial (ex: n >= 0 pour factorial) pour retourner des messages d'erreur clairs avant l'exécution Kotlin."
+  ],
+  "verdict_beta": "Serveur MCP de bonne qualité, bien structuré et sécurisé. L'architecture avec _run_script() et _to_literal() centralisés est une excellente pratique. Les deux bugs majeurs identifiés (gestion du timeout subprocess et sérialisation incorrecte des dicts) méritent correction avant mise en production, mais n'affectent pas les cas d'usage courants (les 4 outils exposés n'utilisent que int, str et list). Recommandé pour beta avec corrections mineures."
+}

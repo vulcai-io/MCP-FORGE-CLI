@@ -1,0 +1,44 @@
+{
+  "score_global": 8.7,
+  "scores_par_critere": {
+    "structure": 9.0,
+    "coverage": 9.5,
+    "auth": 9.5,
+    "docs": 7.5,
+    "fidelity": 9.0,
+    "robustness": 8.0
+  },
+  "points_forts": [
+    "Couverture complète de l'API GraphQL : les 6 opérations (continent, continents, countries, country, language, languages) sont toutes implémentées.",
+    "Gestion correcte des erreurs GraphQL avec détection du champ 'errors' dans la réponse, en plus des erreurs HTTP.",
+    "Implémentation OAuth 2.0 Authorization Code + PKCE (S256) complète et robuste avec rate limiting, whitelist de redirect_uri, et nettoyage des codes expirés.",
+    "Les requêtes GraphQL sont bien construites avec des variables typées (ID!, ContinentFilterInput, etc.) conformément au schéma GraphQL.",
+    "Utilisation correcte de httpx.Client avec timeout explicite de 30s et gestion des exceptions réseau.",
+    "Middleware _TokenMiddleware correctement implémenté pour extraire le Bearer token depuis l'en-tête Authorization ou le query string.",
+    "Les paramètres optionnels de type filtre (filter: dict | None = None) permettent une utilisation flexible des outils MCP."
+  ],
+  "bugs_critiques": [
+    {
+      "description": "Le ContextVar '_request_token' est défini au niveau module et utilisé dans 'handle_sse', mais il n'est jamais renseigné dans le contexte des outils MCP eux-mêmes (continent, countries, etc.). Ces outils n'effectuent aucune authentification avant d'appeler l'API externe — ce qui est acceptable ici car l'API countries.trevorblades.com est publique et ne nécessite pas d'authentification. Il n'y a donc pas de bug fonctionnel.",
+      "severite": "mineur",
+      "ligne": null
+    },
+    {
+      "description": "Les docstrings des outils sont en français et assez minimales. Le paramètre 'filter' est documenté uniquement comme 'Objet de type XxxFilterInput' sans préciser la structure attendue (e.g., {\"code\": {\"eq\": \"EU\"}}), ce qui peut rendre l'outil difficile à utiliser pour un LLM.",
+      "severite": "mineur",
+      "ligne": null
+    },
+    {
+      "description": "Dans la fonction '_verify_pkce', l'exception capturée est 'ValueError' dans le commentaire contextuel mais le code catch générique 'Exception' n'est pas présent — seul 'ValueError' est attrapé via try/except. Cependant, 'encode(\"ascii\")' lève 'UnicodeEncodeError' (sous-classe de 'ValueError') donc c'est correct.",
+      "severite": "mineur",
+      "ligne": null
+    }
+  ],
+  "ameliorations_prioritaires": [
+    "Enrichir les docstrings des outils avec des exemples de valeurs pour les paramètres 'filter' (ex: {\"code\": {\"eq\": \"EU\"}} pour ContinentFilterInput), afin d'améliorer l'utilisation par les LLMs.",
+    "Ajouter une validation légère des paramètres obligatoires (ex: vérifier que 'code' n'est pas vide dans les outils 'continent', 'country', 'language') pour retourner des messages d'erreur clairs plutôt que des erreurs GraphQL opaques.",
+    "Considérer l'ajout d'un champ 'name' dans les sous-requêtes des continents imbriqués (actuellement remplacés par '__typename') pour rendre les réponses plus exploitables sans requêtes supplémentaires.",
+    "Les sous-objets imbriqués utilisent '__typename' au lieu de vrais champs dans certains cas (ex: continent { __typename } dans les pays), ce qui limite l'utilité des données retournées. Exposer au moins les champs 'code' et 'name' dans ces sous-objets."
+  ],
+  "verdict_beta": "Serveur MCP de très bonne qualité, généré proprement par mcp-forge. Les 6 opérations GraphQL de l'API de référence géographique sont toutes couvertes avec une gestion d'erreurs solide. L'infrastructure OAuth 2.0 + PKCE est complète et sécurisée. Les points d'amélioration sont mineurs : enrichir la documentation des paramètres filtres pour les LLMs et exposer davantage de champs dans les sous-objets imbriqués (actuellement réduits à __typename). Prêt pour une utilisation en beta avec ces réserves mineures."
+}

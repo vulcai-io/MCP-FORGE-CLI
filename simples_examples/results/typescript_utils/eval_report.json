@@ -1,0 +1,44 @@
+{
+  "score_global": 8.7,
+  "scores_par_critere": {
+    "structure": 9.5,
+    "coverage": 9.0,
+    "auth": 9.5,
+    "docs": 8.0,
+    "fidelity": 9.0,
+    "robustness": 7.5
+  },
+  "points_forts": [
+    "Architecture très propre : la logique commune d'exécution TypeScript est factorisée dans _run_script et _to_literal, évitant toute répétition entre les outils.",
+    "Implémentation OAuth 2.0 + PKCE S256 complète et correcte, avec rate limiting, whitelist de redirect_uri, et nettoyage des codes expirés.",
+    "Gestion cross-platform correcte : shell=True activé uniquement sous Windows pour résoudre les scripts .bat/.cmd via PATHEXT.",
+    "Nettoyage systématique du fichier temporaire via finally/os.unlink, même en cas d'erreur subprocess.",
+    "Support du token via header Authorization Bearer ET via query string 'token=', couvrant les deux usages courants des clients MCP.",
+    "_to_literal gère correctement bool, int, float, str, list/tuple et None en littéraux TypeScript valides.",
+    "Variable d'environnement TS_SOURCE_DIR permet de redéfinir le répertoire source sans modifier le code."
+  ],
+  "bugs_critiques": [
+    {
+      "description": "handle_sse lit _request_token.get() AVANT que _TokenMiddleware ait pu le setter pour cette requête. Le middleware appelle _request_token.set(token) lors du traitement ASGI, mais handle_sse est un endpoint Starlette appelé après le middleware — en pratique le token devrait être setté, cependant l'ordre d'exécution dépend de la chaîne ASGI et peut être fragile si le middleware n'est pas le premier à traiter la requête SSE.",
+      "ligne": null,
+      "severite": "mineur"
+    },
+    {
+      "description": "La docstring de chaque outil indique 'Résultat de la fonction TypeScript.' pour le champ Returns, ce qui est peu informatif. Il serait préférable d'indiquer le type de retour attendu (ex: 'true' ou 'false' pour isPrime, un entier pour factorial, etc.).",
+      "ligne": null,
+      "severite": "mineur"
+    },
+    {
+      "description": "numbers: list dans sum_list n'est pas typé (list sans paramètre générique). Un LLM pourrait passer des valeurs non numériques. Préférer list[float] ou list[int | float] pour guider le modèle.",
+      "ligne": null,
+      "severite": "mineur"
+    }
+  ],
+  "ameliorations_prioritaires": [
+    "Typer précisément numbers: list[float] dans sum_list pour guider le LLM et éviter des erreurs TypeScript à l'exécution.",
+    "Enrichir les docstrings des outils avec les valeurs de retour attendues (type et format) plutôt qu'un générique 'Résultat de la fonction TypeScript.'",
+    "Ajouter une validation des entrées pour compute_factorial (n >= 0) et check_is_prime (n > 0) afin de retourner un message d'erreur clair avant d'appeler le script TypeScript.",
+    "Considérer un mécanisme de cache ou de vérification de l'existence de utils.ts au démarrage du serveur pour détecter les erreurs de configuration tôt (source_path manquant)."
+  ],
+  "verdict_beta": "Serveur MCP de bonne qualité pour une version bêta. L'architecture est solide, la factorisation du code exemplaire, et l'implémentation OAuth/PKCE complète et correcte. Les seuls points faibles sont mineurs : typage insuffisant de la liste dans sum_list, docstrings de retour peu informatives, et absence de validation des préconditions mathématiques (factorielle négative, etc.). Recommandé pour un déploiement bêta avec ces améliorations mineures."
+}

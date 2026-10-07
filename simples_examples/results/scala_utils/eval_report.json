@@ -1,0 +1,46 @@
+{
+  "score_global": 8.5,
+  "scores_par_critere": {
+    "structure": 9.0,
+    "coverage": 8.5,
+    "auth": 9.5,
+    "docs": 8.0,
+    "fidelity": 9.0,
+    "robustness": 7.5
+  },
+  "points_forts": [
+    "Architecture propre avec extraction de la logique commune dans `_run_script` et `_to_literal`, évitant la répétition de code entre les outils.",
+    "Implémentation OAuth 2.0 + PKCE S256 complète et bien structurée, avec rate limiting, validation des redirect_uri, et nettoyage des codes expirés.",
+    "Gestion correcte des erreurs subprocess : capture du returncode, stderr/stdout, et nettoyage systématique du fichier temporaire dans un bloc `finally`.",
+    "Support multi-plateforme via `shell=(os.name == 'nt')` pour les scripts Windows (.bat/.cmd), bien documenté dans les commentaires.",
+    "Configuration externalisable via variables d'environnement (`SCALA_SOURCE_DIR`, `MCP_SERVER_TOKEN`, `MCP_SERVER_URL`, `OAUTH_ALLOWED_REDIRECT_HOSTS`).",
+    "Middleware `_TokenMiddleware` correctement implémenté pour extraire le Bearer token depuis l'en-tête Authorization ou le query string.",
+    "Fonctions `_to_literal` gérant correctement les types Python → Scala (bool, int, float, str, list/tuple).",
+    "Timeout de 20 secondes sur subprocess, raisonnable pour un processus Scala qui peut être lent au démarrage (JVM)."
+  ],
+  "bugs_critiques": [
+    {
+      "description": "La fonction `handle_sse` récupère `_request_token.get()` AVANT que `_TokenMiddleware` ait potentiellement propagé le token au contexte courant. En réalité, comme `_TokenMiddleware.__call__` appelle `_request_token.set(token)` avant de déléguer à l'app Starlette, le token est bien disponible. Cependant, si le endpoint `/sse` est atteint via un autre chemin (ex: test unitaire direct), le token ne sera pas initialisé. C'est un risque mineur d'intégration.",
+      "severite": "mineur",
+      "ligne": null
+    },
+    {
+      "description": "`_to_literal` retourne `\"null\"` pour `None`, ce qui est invalide en Scala (null existe mais n'est pas une valeur de type `List[_]` ou `Int`). Si un paramètre optionnel de type liste ou entier vaut `None`, le code Scala généré sera invalide et provoquera une erreur à l'exécution Scala (non bloquant au niveau Python, mais comportement incorrect).",
+      "severite": "mineur",
+      "ligne": null
+    },
+    {
+      "description": "La construction de `driver` concatène directement `call_expr` (qui contient des valeurs converties par `_to_literal`) dans une chaîne sans validation supplémentaire. Si un paramètre `str` contient des caractères spéciaux non correctement échappés (ex: `\\n`, `\"`), `json.dumps` gère cela correctement, mais un futur mainteneur pourrait contourner `_to_literal`. Risque très faible en pratique.",
+      "severite": "mineur",
+      "ligne": null
+    }
+  ],
+  "ameliorations_prioritaires": [
+    "Ajouter une validation des paramètres d'entrée dans les outils MCP (ex: vérifier que `n >= 0` pour `calculate_factorial`, ou que `numbers` contient bien des numériques) pour retourner des messages d'erreur clairs sans lancer Scala.",
+    "Envisager un cache de compilation Scala-CLI pour éviter le démarrage JVM à chaque appel (ex: via `scala-cli compile` en amont ou en utilisant un daemon), car chaque invocation relance la JVM et peut prendre plusieurs secondes.",
+    "Préciser le type de `numbers` dans `sum_list` avec `list[int | float]` plutôt que `list` générique pour améliorer la validation et la documentation LLM.",
+    "Documenter clairement dans le README que `SCALA_SOURCE_DIR` doit contenir un fichier `Utils.scala` avec les fonctions `isPrime`, `factorial`, `reverseString`, `sumList` dans un objet `Utils`, car l'absence de ce fichier provoque une erreur d'exécution opaque.",
+    "Ajouter un timeout de subprocess plus élevé (ex: 60s) ou configurable via variable d'environnement pour les machines lentes à démarrer la JVM."
+  ],
+  "verdict_beta": "Serveur MCP de bonne qualité généré par mcp-forge. L'architecture est solide : extraction des patterns communs (`_run_script`, `_to_literal`), OAuth 2.0 + PKCE complet, et gestion correcte des erreurs subprocess. Les outils couvrent bien les 4 fonctions Scala annoncées. Les bugs identifiés sont mineurs et n'affectent pas le fonctionnement normal. La principale fragilité est la dépendance implicite à la présence du fichier `Utils.scala` et au démarrage de la JVM à chaque appel, ce qui peut dégrader l'expérience utilisateur en termes de latence. Recommandé pour usage beta avec les améliorations de validation des entrées et de documentation du fichier source requis."
+}

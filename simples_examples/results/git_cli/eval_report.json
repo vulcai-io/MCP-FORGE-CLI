@@ -1,0 +1,50 @@
+{
+  "score_global": 8.4,
+  "scores_par_critere": {
+    "structure": 9.0,
+    "coverage": 8.5,
+    "auth": 9.5,
+    "docs": 8.5,
+    "fidelity": 8.0,
+    "robustness": 7.0
+  },
+  "points_forts": [
+    "Couverture exhaustive des sous-commandes Git essentielles : clone, init, add, mv, restore, rm, bisect, diff, grep, log, show, status, branch, commit, merge, rebase, reset, switch, tag, fetch, pull, push — soit 22 outils.",
+    "Implémentation OAuth 2.0 + PKCE (S256) complète et robuste avec protection open-redirect, rate limiting, nettoyage des codes expirés et validation stricte du token.",
+    "Gestion cohérente et correcte des arguments CLI : séparation nette des flags booléens, des paramètres scalaires et des arguments positionnels.",
+    "La convention _argv évite toute collision avec les paramètres nommés (notamment `cmd` pour git bisect run), avec un commentaire explicatif clair.",
+    "Validation des paramètres requis (repo, pathspec, source, destination, pattern, file) avec retour d'erreur lisible pour le LLM.",
+    "Timeouts explicites (timeout=30) sur tous les subprocess.run, évitant tout blocage indéfini.",
+    "Middleware _TokenMiddleware propre pour injecter le token Bearer via ContextVar par tâche asynchrone."
+  ],
+  "bugs_critiques": [
+    {
+      "description": "Dans plusieurs outils, les paramètres entiers avec valeur par défaut 0 (jobs, max_depth, context, before_context, after_context, threads, max_count, deepen, C) ne sont jamais ajoutés à la ligne de commande quand leur valeur est 0, ce qui est correct pour les valeurs par défaut — mais si l'utilisateur passe explicitement 0, la valeur est silencieusement ignorée. Ce n'est qu'un problème mineur car 0 est rarement une valeur utile pour ces arguments.",
+      "severite": "mineur",
+      "ligne": null
+    },
+    {
+      "description": "La fonction `handle_sse` lit `_request_token.get()` AVANT que `_TokenMiddleware` n'ait eu l'occasion de le setter pour cette requête, puisque le middleware s'exécute en amont de la route Starlette. En réalité le token est bien setté par le middleware avant l'appel à l'endpoint — mais si la route SSE est appelée sans passer par le middleware (e.g. test direct), le token sera vide. Ce n'est pas un bug en déploiement normal mais pourrait surprendre lors des tests.",
+      "severite": "mineur",
+      "ligne": null
+    },
+    {
+      "description": "git bisect est exposé comme un outil unique avec tous les sous-arguments optionnels (bad, good, rev, commit, logfile, cmd) sans aucune logique de dispatch vers les sous-commandes réelles (start, bad, good, skip, reset, log, run, replay). Il est donc impossible de former des commandes bisect correctes via cet outil (ex: `git bisect bad abc123` ou `git bisect run myscript`), car les arguments sont simplement concaténés sans sous-commande.",
+      "severite": "majeur",
+      "ligne": null
+    },
+    {
+      "description": "subprocess.run est appelé sans `cwd` parameter : toutes les commandes git s'exécutent dans le répertoire de travail du processus serveur (généralement le répertoire d'installation du serveur), pas dans le dépôt cible. Sans paramètre permettant à l'utilisateur de spécifier le répertoire de travail, la plupart des outils (add, commit, status, etc.) seront inutilisables sur un dépôt autre que le CWD du serveur.",
+      "severite": "majeur",
+      "ligne": null
+    }
+  ],
+  "ameliorations_prioritaires": [
+    "Ajouter un paramètre `cwd` (répertoire de travail) à tous les outils qui opèrent sur un dépôt existant (add, commit, status, branch, log, diff, etc.) et le passer à subprocess.run(cwd=...). Sans cela, les outils ne peuvent opérer que sur le CWD du processus serveur.",
+    "Refactoriser l'outil `bisect` pour exposer les sous-commandes comme paramètre obligatoire (ex: `subcommand: Literal['start','bad','good','skip','reset','log','run','replay']`) afin de produire des invocations git bisect valides.",
+    "Ajouter une protection contre l'injection de commandes shell via les valeurs de paramètres (notamment `pathspec`, `repo`, `message`) : bien que subprocess.run avec une liste soit sûr contre shell=True, certaines valeurs commençant par '-' pourraient être interprétées comme des flags. Utiliser '--' avant les arguments positionnels pour tous les outils concernés.",
+    "Distinguer stdout et stderr dans la valeur de retour plutôt que de retourner l'un ou l'autre via `result.stdout or result.stderr` : certaines commandes écrivent des informations utiles sur stderr même en cas de succès (ex: git clone --progress). Retourner les deux séparément ou concaténés.",
+    "Ajouter un outil `checkout` (git checkout) qui reste très utilisé malgré switch/restore, pour une meilleure compatibilité avec les workflows existants."
+  ],
+  "verdict_beta": "Serveur git_cli bien structuré et remarquablement complet en termes de surface d'API Git, avec une authentification OAuth2+PKCE de qualité production. Deux bugs majeurs limitent son utilité pratique : l'absence de paramètre `cwd` rend la majorité des outils inutilisables hors du répertoire de démarrage du serveur, et l'outil `bisect` ne peut pas former de commandes valides faute d'une sous-commande explicite. Une fois ces deux points corrigés, le serveur atteindra un niveau de qualité production solide."
+}

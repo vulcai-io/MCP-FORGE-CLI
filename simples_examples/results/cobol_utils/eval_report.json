@@ -1,0 +1,48 @@
+{
+  "score_global": 8.4,
+  "scores_par_critere": {
+    "structure": 9.0,
+    "coverage": 8.5,
+    "auth": 9.5,
+    "docs": 8.0,
+    "fidelity": 8.5,
+    "robustness": 7.5
+  },
+  "points_forts": [
+    "Architecture originale et bien pensée : le serveur MCP orchestre des sous-programmes COBOL via GnuCOBOL, avec une gestion rigoureuse des formats source (FIXED/FREE) et du nom de binaire temporaire.",
+    "Implémentation OAuth 2.0 + PKCE S256 complète et sécurisée : rate limiting, whitelist de redirect_uri, nettoyage des codes expirés, comparison à temps constant via secrets.compare_digest.",
+    "Gestion soignée des spécificités Windows (COB_CONFIG_DIR dérivé dynamiquement) sans casser la portabilité Linux/macOS.",
+    "Les littéraux COBOL sont construits de manière défensive : _cobol_string_literal tronque à max_len et échappe les guillemets internes correctement.",
+    "Nettoyage systématique des fichiers temporaires dans le bloc finally, même en cas d'exception.",
+    "Commentaires techniques très détaillés expliquant les choix non évidents (format LIBRE pour le driver, ordre du PROGRAM-ID, bug MSYS2)."
+  ],
+  "bugs_critiques": [
+    {
+      "description": "Dans _run_cobol_driver, le token _request_token est importé mais jamais utilisé dans la logique principale des outils (check_is_prime, compute_factorial, reverse_string). Ce n'est pas un bug bloquant pour les outils eux-mêmes, mais _request_token.set() dans _TokenMiddleware ne protège pas les appels aux outils MCP car handle_sse vérifie le token à la connexion SSE uniquement — une fois connecté, aucun appel tool individuel n'est revérifié. C'est le comportement attendu pour SSE/MCP, donc mineur.",
+      "severite": "mineur",
+      "ligne": null
+    },
+    {
+      "description": "La validation d'entrée pour n et n2 (paramètres PIC 9(4)) ne rejette pas les valeurs négatives : _cobol_numeric_literal appelle int() puis str(), ce qui pour une valeur négative comme -5 produit '-5', invalide pour un PIC 9(4) COBOL et causera une erreur de compilation. Une vérification de borne (0 ≤ n ≤ 9999) devrait être faite avant la construction du driver.",
+      "severite": "majeur",
+      "ligne": null
+    },
+    {
+      "description": "compute_factorial avec PIC 9(9) comme type de résultat est limité à 999 999 999 (9 chiffres), soit environ 12! = 479 001 600. Pour n=13 (6 227 020 800), le résultat déborde silencieusement en COBOL (troncature). La docstring annonce '0 à 9999' mais les valeurs > 12 produiront des résultats incorrects sans avertissement.",
+      "severite": "majeur",
+      "ligne": null
+    },
+    {
+      "description": "Dans handle_sse, le token est lu via _request_token.get() AVANT que _TokenMiddleware ait forcément eu l'occasion de le setter pour cette requête précise, car ContextVar est par tâche asyncio. Dans Starlette/uvicorn avec le middleware ASGI wrappé, l'ordre d'exécution garantit que _TokenMiddleware.__call__ s'exécute avant handle_sse — donc c'est correct en pratique. Mineur : une vérification explicite du header Authorization dans handle_sse serait plus lisible.",
+      "severite": "mineur",
+      "ligne": null
+    }
+  ],
+  "ameliorations_prioritaires": [
+    "Ajouter une validation explicite des bornes pour n et n2 (0 ≤ valeur ≤ 9999) avant de construire le driver COBOL, avec retour d'erreur clair en cas de valeur hors plage ou négative.",
+    "Documenter clairement la limite pratique de compute_factorial (n ≤ 12 pour éviter le dépassement PIC 9(9)) ou agrandir le champ résultat (ex: PIC 9(18) ou S9(18) COMP-5) et adapter numeric_output en conséquence.",
+    "Ajouter un mécanisme de sandbox ou de timeout plus agressif pour la compilation COBOL afin d'éviter une utilisation abusive (la compilation de code arbitraire via subprocess présente un risque si COBOL_SOURCE_DIR est modifiable par un attaquant).",
+    "Envisager de vérifier que COBOL_SOURCE_DIR et les fichiers .CBL ne sont pas world-writable au démarrage, pour éviter une injection de code COBOL malveillant."
+  ],
+  "verdict_beta": "Serveur MCP de qualité solide pour une génération automatique : l'architecture COBOL-driver est ingénieuse et bien documentée, l'OAuth/PKCE est complet et robuste. Deux bugs majeurs à corriger avant production — la validation des entiers négatifs (qui crashe le compilateur COBOL) et le dépassement silencieux de PIC 9(9) pour les factorielles de grands nombres. Le reste est soigné et prêt pour un usage beta avec les correctifs mentionnés."
+}

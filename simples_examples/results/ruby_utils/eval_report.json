@@ -1,0 +1,44 @@
+{
+  "score_global": 8.5,
+  "scores_par_critere": {
+    "structure": 9.0,
+    "coverage": 8.5,
+    "auth": 9.5,
+    "docs": 8.0,
+    "fidelity": 9.0,
+    "robustness": 7.5
+  },
+  "points_forts": [
+    "Architecture propre avec extraction de la logique commune dans _run_script() et _to_literal(), évitant la répétition dans chaque outil MCP.",
+    "Implémentation OAuth 2.0 complète avec PKCE S256, rate limiting, whitelist de redirect_uri et protection contre les open redirects.",
+    "Gestion robuste des fichiers temporaires avec nettoyage systématique dans un bloc finally, même en cas d'erreur.",
+    "Compatibilité Windows gérée explicitement via shell=(os.name == 'nt') pour les interpréteurs installés comme scripts .bat/.cmd.",
+    "La fonction _to_literal() couvre correctement les types Python courants (None→nil, bool, int/float, str, list) pour une conversion fidèle en littéraux Ruby.",
+    "Les outils MCP sont bien documentés avec des descriptions claires de leur usage et de leurs paramètres.",
+    "Le répertoire source est configurable via variable d'environnement RUBY_SOURCE_DIR, facilitant le déploiement sur différentes machines."
+  ],
+  "bugs_critiques": [
+    {
+      "description": "Le token extrait par _TokenMiddleware est stocké dans _request_token via ContextVar.set(), mais handle_sse récupère la valeur avec _request_token.get() AVANT l'appel async with sse_transport.connect_sse(). Dans un contexte asyncio, le ContextVar est bien propagé par tâche, mais si le middleware s'exécute dans une tâche différente de handle_sse (ce qui peut arriver avec certaines versions de Starlette/uvicorn), la valeur pourrait ne pas être visible. Ce point mérite vérification selon la version exacte de Starlette utilisée.",
+      "severite": "mineur",
+      "ligne": null
+    },
+    {
+      "description": "Le paramètre `numbers: list` dans sum_list n'est pas typé (list sans paramètre générique). Cela peut induire en erreur le LLM qui n'a pas de contrainte sur le type des éléments. Préférer `list[float]` ou `list[int | float]` pour une meilleure guidance.",
+      "severite": "mineur",
+      "ligne": 136
+    },
+    {
+      "description": "La vérification de disponibilité de l'interpréteur Ruby (_interpreter_available()) est effectuée à chaque appel d'outil via _run_script(), ce qui représente un appel shutil.which() systématique. Pour un serveur MCP haute fréquence, cela pourrait être mis en cache au démarrage.",
+      "severite": "mineur",
+      "ligne": 35
+    }
+  ],
+  "ameliorations_prioritaires": [
+    "Typer précisément le paramètre `numbers` de sum_list avec `list[float]` ou `list[int | float]` pour améliorer la guidance du LLM et la validation des entrées.",
+    "Envisager de mettre en cache le résultat de shutil.which('ruby') au niveau module pour éviter une vérification système à chaque appel d'outil.",
+    "Ajouter une validation des entrées pour les outils check_is_prime et calculate_factorial (ex: vérifier que n >= 0 pour factorial) avant d'appeler le sous-processus Ruby, afin de renvoyer des messages d'erreur clairs sans lancer un processus inutile.",
+    "Ajouter un timeout configurable via variable d'environnement pour le subprocess Ruby (actuellement fixé à 10s) pour permettre des ajustements en cas de calculs longs (ex: factorial de grands nombres)."
+  ],
+  "verdict_beta": "Serveur MCP de bonne qualité, bien structuré et avec une implémentation OAuth/PKCE complète. Il remplit correctement sa mission d'exposition d'utilitaires Ruby via subprocess. Les quelques points d'amélioration sont mineurs (typage, cache, validation d'entrée). Recommandé pour usage beta avec les améliorations de typage et de validation d'entrée comme priorités."
+}

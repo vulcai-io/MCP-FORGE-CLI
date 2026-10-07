@@ -1,0 +1,45 @@
+{
+  "score_global": 8.4,
+  "scores_par_critere": {
+    "structure": 9.0,
+    "coverage": 8.5,
+    "auth": 9.5,
+    "docs": 8.0,
+    "fidelity": 8.5,
+    "robustness": 7.5
+  },
+  "points_forts": [
+    "Architecture propre avec extraction de la logique commune dans _run_script() et _to_literal(), évitant la répétition de code dans chaque outil MCP.",
+    "Implémentation OAuth 2.0 + PKCE (S256) complète et correcte, avec rate limiting, whitelist de redirect_uri, et nettoyage des codes expirés.",
+    "Gestion soigneuse des spécificités C# 'top-level statements' : réorganisation des using avant le Console.WriteLine() pour respecter l'ordre exigé par le compilateur (CS8803/CS1529).",
+    "Nettoyage systématique des fichiers temporaires via finally/os.unlink, même en cas d'erreur subprocess.",
+    "La logique shell=True conditionnelle (Windows uniquement) est pertinente et bien commentée.",
+    "Les types Python des paramètres MCP (int, str, list[float]) correspondent bien aux types C# attendus.",
+    "_CSHARP_SOURCE_DIR redéfinissable via variable d'environnement pour la portabilité."
+  ],
+  "bugs_critiques": [
+    {
+      "description": "Dans _run_script(), la commande subprocess utilise 'dotnet run fichier.cs' mais 'dotnet run' attend un projet ou solution, pas un fichier .cs isolé. La bonne commande pour exécuter un fichier .cs isolé avec le SDK .NET 7+ est 'dotnet-script fichier.cs' ou 'dotnet script fichier.cs' (via dotnet-script), ou bien compiler puis exécuter. 'dotnet run <fichier.cs>' n'est pas valide sans .csproj — le fichier .cs serait interprété comme un argument non reconnu par 'dotnet run', provoquant une erreur systématique.",
+      "ligne": 72,
+      "severite": "majeur"
+    },
+    {
+      "description": "La regex _using_match pour extraire l'en-tête using ne capture que les lignes 'using X.Y.Z;' sans gérer les formes 'using static ...;', 'using Alias = ...;', 'global using ...;', ni les blocs using imbriqués. Cela peut conduire à un driver mal formé si le fichier source utilise ces formes modernes (C# 6+/C# 10+).",
+      "ligne": 57,
+      "severite": "mineur"
+    },
+    {
+      "description": "_to_literal() encode les listes comme 'new double[] {...}' quel que soit le type réel des éléments. Pour utils_sumlist (list[float]), c'est correct. Mais si un futur outil passe une liste d'entiers ou de strings, la conversion sera incorrecte (ex: strings dans un tableau double[] lèverait une erreur C#). La conception est fragile pour extension.",
+      "ligne": 100,
+      "severite": "mineur"
+    }
+  ],
+  "ameliorations_prioritaires": [
+    "Corriger la commande subprocess : remplacer ['dotnet', 'run', tmp_path] par une approche valide pour exécuter un .cs isolé — soit via dotnet-script (['dotnet', 'script', tmp_path]), soit en créant un répertoire temporaire avec un .csproj minimal, soit via 'dotnet csi' (C# Interactive). Documenter clairement la dépendance exacte requise.",
+    "Étendre la regex d'extraction des using pour couvrir 'using static', 'using Alias =', 'global using' afin d'assurer la compatibilité avec C# moderne (6+/10+).",
+    "Ajouter une validation des arguments avant l'appel C# : par exemple, vérifier que n >= 0 pour Factorial (une valeur négative lève une exception C# non contrôlée qui remonte en stderr brut, sans message utilisateur clair).",
+    "Enrichir les docstrings des outils MCP avec les types de retour attendus (bool pour IsPrime, long/int pour Factorial, string pour ReverseString, double pour SumList) pour améliorer l'expérience LLM.",
+    "Envisager un cache ou une compilation AOT du fichier Utils.cs pour éviter la latence de démarrage du runtime .NET à chaque appel outil (le cold start dotnet peut dépasser 1-2 secondes)."
+  ],
+  "verdict_beta": "Serveur mcp-forge fonctionnellement bien structuré avec une architecture solide (extraction _run_script, OAuth PKCE complet, gestion des fichiers temporaires). Le point bloquant principal est la commande subprocess `dotnet run fichier.cs` qui n'est pas la bonne invocation pour exécuter un .cs isolé sans .csproj — tous les outils retourneraient une erreur à l'exécution. Une fois ce bug corrigé et la commande dotnet adaptée (dotnet-script ou projet temporaire), le serveur serait pleinement opérationnel. Les autres problèmes sont mineurs. Recommandé pour la beta après correction du mode d'invocation dotnet."
+}

@@ -1,0 +1,46 @@
+{
+  "score_global": 8.5,
+  "scores_par_critere": {
+    "structure": 9.0,
+    "coverage": 8.5,
+    "auth": 9.5,
+    "docs": 8.0,
+    "fidelity": 8.5,
+    "robustness": 7.5
+  },
+  "points_forts": [
+    "Architecture propre : la logique d'exécution Lua est centralisée dans `_run_script` et `_to_literal`, évitant toute duplication entre les outils.",
+    "OAuth 2.0 Authorization Code + PKCE (S256) complet, avec rate limiting, whitelist de redirect_uri et protection contre les open redirects.",
+    "Gestion sécurisée des fichiers temporaires : suppression garantie dans un bloc `finally`, même en cas d'erreur subprocess.",
+    "Le helper `_to_literal` couvre correctement les types Python → Lua (nil, bool, int/float, str, list/tuple) avec échappement des apostrophes.",
+    "Compatibilité Windows gérée explicitement (`shell=True` conditionnel) avec une explication claire en commentaire.",
+    "Le module Lua idiome (`return M`) est correctement supprimé avant injection du driver, permettant de supporter les deux styles de fichiers Lua.",
+    "Timeout subprocess fixé à 10 s : protège contre les boucles infinies dans le code Lua utilisateur.",
+    "`_request_token` utilise `ContextVar` pour l'isolation par requête asynchrone, pattern correct."
+  ],
+  "bugs_critiques": [
+    {
+      "description": "L'appel `M.is_prime(...)`, `M.factorial(...)`, etc. suppose que le module Lua expose ses fonctions via une table `M`. Si le fichier `utils.lua` définit ses fonctions en global (sans table de module), tous les appels échoueront avec une erreur Lua 'attempt to index a nil value (global M)'. Il n'y a aucun mécanisme de fallback ni documentation claire imposant ce contrat sur le fichier source.",
+      "ligne": null,
+      "severite": "majeur"
+    },
+    {
+      "description": "La regex de suppression du `return` final (`r'\\breturn\\b[^\\n]*\\s*\\Z'`) ne capture que les `return` sur une seule ligne. Un bloc `return M` suivi d'un commentaire ou d'une ligne vide supplémentaire après `.rstrip()` pourrait ne pas être supprimé, laissant un `return` invalide dans le driver et provoquant une erreur Lua.",
+      "ligne": 57,
+      "severite": "mineur"
+    },
+    {
+      "description": "La fonction `handle_sse` lit `_request_token.get()` avant d'avoir défini le token via `_TokenMiddleware`, mais `_TokenMiddleware` est appliqué en dehors de Starlette. Si le middleware n'est pas correctement chaîné (ex: appel direct à `starlette_app` sans `_TokenMiddleware`), le token sera toujours vide et la vérification d'authentification silencieusement bypassée.",
+      "ligne": null,
+      "severite": "mineur"
+    }
+  ],
+  "ameliorations_prioritaires": [
+    "Documenter explicitement le contrat du fichier `utils.lua` : les fonctions doivent être exposées via une table locale `M` (ex: `local M = {}; M.is_prime = function(...) ... end; return M`). Alternativement, supporter les deux styles (avec et sans table `M`) en testant dynamiquement si `M` est nil.",
+    "Améliorer la robustesse de la suppression du `return` final en utilisant une regex multi-ligne ou une approche de parsing plus fine, pour couvrir les cas de whitespace/commentaires en fin de fichier.",
+    "Ajouter une validation des entrées dans les outils MCP : par exemple, vérifier que `n` est positif pour `calculate_factorial`, ou que `numbers` contient uniquement des valeurs numériques pour `sum_list`, et retourner un message d'erreur clair avant d'appeler Lua.",
+    "Ajouter un type hint précis pour le paramètre `numbers` dans `sum_list` (ex: `list[int | float]`) pour aider le LLM à construire des appels corrects.",
+    "Envisager un cache ou un hash du fichier source Lua pour détecter les modifications et invalider un éventuel cache futur, sans re-lire le fichier à chaque appel."
+  ],
+  "verdict_beta": "Serveur MCP fonctionnel et bien structuré pour l'exécution de fonctions Lua via subprocess. La factorisation du code d'exécution est exemplaire, et l'infrastructure OAuth/PKCE est complète et sécurisée. Le principal risque opérationnel est la dépendance implicite au style de module Lua (`M.*`) qui rendra tous les outils défaillants si `utils.lua` n'est pas écrit selon ce contrat — un contrat qui n'est pas vérifié à l'exécution. Avec une validation des entrées légèrement renforcée et une documentation du contrat Lua, ce serveur serait prêt pour une utilisation en production."
+}

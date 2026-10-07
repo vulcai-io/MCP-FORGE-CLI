@@ -1,0 +1,44 @@
+{
+  "score_global": 8.7,
+  "scores_par_critere": {
+    "structure": 9.5,
+    "coverage": 9.0,
+    "auth": 9.5,
+    "docs": 8.0,
+    "fidelity": 9.0,
+    "robustness": 7.5
+  },
+  "points_forts": [
+    "Architecture très propre : la logique d'exécution PHP est centralisée dans `_run_script` et `_to_literal`, évitant toute répétition entre les outils.",
+    "Gestion exemplaire du cycle de vie des fichiers temporaires : suppression garantie via un bloc `finally` même en cas d'erreur.",
+    "OAuth 2.0 Authorization Code + PKCE (S256) complet avec rate limiting, whitelist de redirect_uri, nettoyage des codes expirés et middleware de token par contexte async.",
+    "Support multi-plateforme soigné : `shell=(os.name == 'nt')` pour gérer les scripts .bat/.cmd Windows, suppression correcte de la balise fermante PHP `?>`.",
+    "La conversion de valeurs Python en littéraux PHP via `_to_literal` couvre correctement les types booléens, numériques, chaînes (avec échappement), listes et None.",
+    "Configurable via variables d'environnement (`PHP_SOURCE_DIR`, `MCP_SERVER_URL`, `MCP_SERVER_TOKEN`, `OAUTH_ALLOWED_REDIRECT_HOSTS`) — bon comportement DevOps."
+  ],
+  "bugs_critiques": [
+    {
+      "description": "Dans `handle_sse`, le token est lu via `_request_token.get()` AVANT que `_TokenMiddleware.__call__` ait pu appeler `_request_token.set(token)` pour la requête SSE courante. En réalité, `_TokenMiddleware` s'exécute avant le routage Starlette, donc le token est bien positionné avant l'appel de `handle_sse`. Cependant, si la connexion SSE est longue (streaming), un second appel `_request_token.get()` en cours de session lirait toujours la valeur initiale — ce comportement est correct grâce à `ContextVar` par tâche asyncio. Pas de bug réel ici.",
+      "severite": "mineur",
+      "ligne": null
+    },
+    {
+      "description": "La fonction `_to_literal` utilise `repr(value)` pour les flottants Python, ce qui peut produire des formes comme `1e+308` ou `inf` qui sont des littéraux PHP invalides ou entraînent un comportement inattendu pour des valeurs extrêmes.",
+      "severite": "mineur",
+      "ligne": 96
+    },
+    {
+      "description": "Le type `list` non typé pour le paramètre `numbers` dans `sum_list` (pas de `list[float]` ou `list[int]`) peut entraîner une sérialisation inattendue si l'LLM passe des objets imbriqués complexes. Problème de robustesse mineur uniquement.",
+      "severite": "mineur",
+      "ligne": 176
+    }
+  ],
+  "ameliorations_prioritaires": [
+    "Ajouter une validation d'entrée pour `n` dans `check_is_prime` et `calculate_factorial` (ex: rejeter les entiers négatifs pour factorial, ou les valeurs extrêmes) afin d'éviter des exécutions PHP longues ou des erreurs PHP peu explicites.",
+    "Typer plus précisément le paramètre `numbers: list` en `numbers: list[float]` ou `list[int]` pour guider l'LLM et améliorer la sérialisation.",
+    "Gérer le cas `float('inf')` et `float('nan')` dans `_to_literal` pour éviter de générer un littéral PHP invalide.",
+    "Documenter dans le README ou dans les docstrings le format attendu de la valeur de retour PHP (ex: `true`/`false` en string pour `is_prime`) afin que le client MCP puisse interpréter correctement le résultat.",
+    "Envisager un timeout configurable via variable d'environnement pour `subprocess.run` (actuellement hardcodé à 10s) pour les environnements à PHP lent."
+  ],
+  "verdict_beta": "Serveur MCP de très bonne qualité pour une génération automatique. L'architecture est solide, la sécurité OAuth/PKCE est correctement implémentée, et le pattern d'exécution PHP via subprocess est bien conçu et robuste. Les seuls points d'amélioration sont mineurs : typage plus précis, validation d'entrée renforcée et gestion des cas limites flottants dans `_to_literal`. Prêt pour un déploiement beta avec une surveillance des erreurs PHP remontées."
+}

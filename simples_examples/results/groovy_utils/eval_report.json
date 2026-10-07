@@ -1,0 +1,43 @@
+{
+  "score_global": 8.5,
+  "scores_par_critere": {
+    "structure": 9.0,
+    "coverage": 8.5,
+    "auth": 9.5,
+    "docs": 8.5,
+    "fidelity": 9.0,
+    "robustness": 7.0
+  },
+  "points_forts": [
+    "Architecture propre avec extraction de la logique commune dans _run_script() et _to_literal(), évitant la répétition de code dans chaque outil MCP.",
+    "Implémentation OAuth 2.0 complète avec PKCE S256, rate limiting, whitelist de redirect_uri, et nettoyage des codes expirés.",
+    "Gestion robuste des fichiers temporaires avec finally/os.unlink pour garantir le nettoyage même en cas d'erreur.",
+    "Compatibilité Windows correctement gérée via shell=(os.name == 'nt') pour les interpréteurs installés comme scripts .bat/.cmd.",
+    "Vérification de la disponibilité de l'interpréteur Groovy via shutil.which() avant toute exécution.",
+    "Support de la configuration via variables d'environnement (GROOVY_SOURCE_DIR, MCP_SERVER_TOKEN, MCP_SERVER_URL) pour la portabilité."
+  ],
+  "bugs_critiques": [
+    {
+      "description": "Injection de code potentielle : _to_literal() pour les chaînes échappe les apostrophes et backslashes, mais d'autres caractères spéciaux Groovy (ex: ${...} dans une GString) ne sont pas concernés car les chaînes utilisent des guillemets simples (pas de GString). Cependant, si une valeur de type list contient des objets non-string/non-number/non-bool, json.dumps() est appelé comme fallback, ce qui peut produire du JSON invalide en Groovy (ex: true/false vs true/false — OK, mais null vs null — OK, objets imbriqués complexes pourraient poser problème). Risque faible mais présent.",
+      "ligne": 100,
+      "severite": "mineur"
+    },
+    {
+      "description": "Le token extrait depuis le query string dans _TokenMiddleware n'est pas décodé URL (urllib.parse.unquote) avant utilisation, ce qui peut causer une comparaison échouée si le token contient des caractères encodés (ex: +, %, =).",
+      "ligne": null,
+      "severite": "mineur"
+    },
+    {
+      "description": "La fonction handle_sse lit _request_token.get() avant que le middleware l'ait positionné pour cette requête spécifique — en réalité _TokenMiddleware positionne bien la ContextVar avant d'appeler l'app, donc l'ordre est correct. Pas de bug réel.",
+      "ligne": null,
+      "severite": "mineur"
+    }
+  ],
+  "ameliorations_prioritaires": [
+    "Ajouter une validation des types d'entrée dans les outils MCP (ex: vérifier que n >= 0 pour factorial, que numbers est bien une liste de nombres) pour retourner des messages d'erreur clairs plutôt que des erreurs Groovy cryptiques.",
+    "Ajouter urllib.parse.unquote() lors de l'extraction du token depuis le query string dans _TokenMiddleware pour gérer correctement les tokens encodés.",
+    "Envisager un timeout configurable via variable d'environnement pour _run_script() (actuellement fixé à 10s), utile pour des calculs Groovy potentiellement longs (ex: factorial de très grands nombres).",
+    "Documenter dans le README les prérequis système (installation de Groovy, configuration de GROOVY_SOURCE_DIR) et fournir un exemple de fichier Utils.groovy attendu."
+  ],
+  "verdict_beta": "Serveur MCP de bonne qualité, bien structuré et sécurisé. L'approche d'exécution de scripts Groovy via subprocess est correctement implémentée avec une gestion propre des ressources temporaires. L'OAuth 2.0 + PKCE est complet et robuste. Les quelques points à améliorer sont mineurs (validation d'entrée, décodage URL du token). Prêt pour un usage beta avec les prérequis système documentés."
+}

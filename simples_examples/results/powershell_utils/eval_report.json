@@ -1,0 +1,43 @@
+{
+  "score_global": 8.4,
+  "scores_par_critere": {
+    "structure": 9.0,
+    "coverage": 8.5,
+    "auth": 9.5,
+    "docs": 8.0,
+    "fidelity": 8.5,
+    "robustness": 7.0
+  },
+  "points_forts": [
+    "Architecture bien factorisée : la logique d'exécution PowerShell est centralisée dans _run_script() et _to_literal(), évitant toute répétition dans les outils MCP.",
+    "Implémentation OAuth 2.0 + PKCE complète et robuste : authorization code flow, rate limiting, redirect_uri whitelist, nettoyage des codes expirés.",
+    "Gestion cross-platform soignée : shell=(os.name == 'nt') pour la compatibilité Windows/POSIX, fichier temporaire nettoyé dans un bloc finally.",
+    "Conversion de types Python → PowerShell couvre les cas courants : bool ($true/$false), None ($null), int/float, str (avec échappement des quotes), list (@(...)).",
+    "Timeout de subprocess (10s) et suppression du fichier temporaire garantis, limitant les risques de fuite de ressources.",
+    "Documentation des outils claire et orientée usage LLM avec descriptions explicites des paramètres et cas d'emploi."
+  ],
+  "bugs_critiques": [
+    {
+      "description": "Injection de commande PowerShell possible : les valeurs string passées via _to_literal() échappent les backslashes et single-quotes, mais un attaquant contrôlant 's' dans get_reverse_string pourrait injecter via des séquences non gérées. Toutefois, le risque principal est que call_expr est construit par concaténation directe : si un paramètre de type list contient des strings avec des séquences PowerShell spéciales non couvertes par l'échappement actuel, l'exécution de code arbitraire est possible.",
+      "ligne": 68,
+      "severite": "majeur"
+    },
+    {
+      "description": "Dans handle_sse, le token est lu depuis _request_token.get() AVANT que _TokenMiddleware ne soit appelé dans le cycle ASGI — mais en réalité le middleware est bien appliqué avant le routeur Starlette. Cependant, l'ordre de wrapping est _TokenMiddleware(starlette_app), donc le token est bien défini avant l'appel de handle_sse. Pas de bug réel ici, mais le code est fragile si l'ordre de middleware change.",
+      "ligne": null,
+      "severite": "mineur"
+    },
+    {
+      "description": "La liste list[float] passée à get_sum_list est convertie via _to_literal() en @(1.0, 2.0, ...) — format PowerShell valide. Mais si la liste est vide (@()), certaines versions de PowerShell peuvent retourner $null au lieu de 0 pour une somme vide, ce qui peut surprendre l'appelant LLM.",
+      "ligne": 130,
+      "severite": "mineur"
+    }
+  ],
+  "ameliorations_prioritaires": [
+    "Renforcer la sanitisation des arguments PowerShell : envisager une validation stricte des types (ex: rejeter tout string contenant des caractères de contrôle PowerShell non gérés comme `, $, (, ), ;) avant la construction de call_expr, ou utiliser des paramètres nommés PowerShell avec -EncodedCommand pour éviter tout risque d'injection.",
+    "Ajouter une validation des entrées numériques dans test_is_prime et get_factorial : par exemple, refuser les valeurs négatives pour factorial, ou les très grands entiers qui pourraient provoquer un timeout ou un crash du processus PowerShell.",
+    "Documenter explicitement la dépendance à PowerShell (version minimale requise, compatibilité pwsh vs powershell) et ajouter un check au démarrage du serveur (dans __main__) plutôt qu'à chaque appel d'outil.",
+    "Envisager de remplacer shutil.which('powershell') par une vérification de 'pwsh' en fallback pour la compatibilité avec PowerShell 7+ sur Linux/macOS où l'exécutable s'appelle 'pwsh' et non 'powershell'."
+  ],
+  "verdict_beta": "Serveur MCP fonctionnel et bien structuré pour l'exécution de fonctions utilitaires PowerShell. L'architecture est soignée avec factorisation du code d'exécution, et l'implémentation OAuth est complète. Le principal risque à adresser avant une mise en production est le potentiel d'injection de commandes PowerShell via les paramètres string. La dépendance à l'exécutable `powershell` (vs `pwsh`) peut limiter la portabilité sur Linux/macOS. Bon candidat beta avec corrections mineures à apporter."
+}
