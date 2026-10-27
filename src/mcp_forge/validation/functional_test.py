@@ -41,6 +41,20 @@ _CHECK_SERVER_START = "Server start"
 _CHECK_MCP_INIT    = "MCP initialize"
 _CHECK_TOOLS_LIST  = "tools/list"
 
+# Lance server.py en stdio. Les serveurs générés démarrent en HTTP quand on
+# les exécute (`if __name__ == "__main__": uvicorn.run(...)`) ; le stdio passe
+# par leur objet FastMCP `mcp`, comme `mcp run server.py`. Un serveur sans
+# objet `mcp` (écrit à la main) est exécuté comme script.
+STDIO_BOOTSTRAP = (
+    "import runpy, sys\n"
+    "ns = runpy.run_path(sys.argv[1], run_name='__mcp_forge_stdio__')\n"
+    "server = ns.get('mcp')\n"
+    "if hasattr(server, 'run'):\n"
+    "    server.run('stdio')\n"
+    "else:\n"
+    "    runpy.run_path(sys.argv[1], run_name='__main__')\n"
+)
+
 # Préfixes indiquant un tool d'écriture (skippés par défaut en phase 2)
 _WRITE_PREFIXES = (
     "create_", "delete_", "update_", "add_", "remove_",
@@ -181,51 +195,51 @@ class _Runner:
         self._skip_writes = skip_writes
 
     async def run(self, server_path: Path, result: FunctionalTestResult) -> None:
-        from mcp.client.stdio import stdio_client, StdioServerParameters
-        from mcp import ClientSession
+        from contextlib import AsyncExitStack
 
+        from mcp import ClientSession
+        from mcp.client.stdio import StdioServerParameters, stdio_client
+
+        # `python server.py` démarre le serveur HTTP (uvicorn) : un client
+        # stdio n'obtenait jamais de réponse. Le serveur est lancé en stdio
+        # via son objet FastMCP, comme le fait `mcp run`.
         server_params = StdioServerParameters(
             command=sys.executable,
-            args=[str(server_path)],
+            args=["-c", STDIO_BOOTSTRAP, server_path.name],
+            cwd=str(server_path.parent),
         )
 
-        # --- Démarrage ---
-        try:
-            cm = stdio_client(server_params)
-            async with asyncio.timeout(self._t):
-                read, write = await cm.__aenter__()
-            result.add(_CHECK_SERVER_START, True)
-        except TimeoutError:
-            result.add(_CHECK_SERVER_START, False, f"timeout after {self._t:.0f}s")
-            return
-        except Exception as e:
-            result.add(_CHECK_SERVER_START, False, str(e))
-            return
+        # AsyncExitStack : la session est toujours refermée avant le client
+        # stdio, y compris quand le handshake échoue (sinon anyio lève
+        # « Attempted to exit a cancel scope that isn't the current task's »).
+        async with AsyncExitStack() as stack:
+            # --- Démarrage ---
+            try:
+                async with asyncio.timeout(self._t):
+                    read, write = await stack.enter_async_context(stdio_client(server_params))
+                result.add(_CHECK_SERVER_START, True)
+            except TimeoutError:
+                result.add(_CHECK_SERVER_START, False, f"timeout after {self._t:.0f}s")
+                return
+            except Exception as e:
+                result.add(_CHECK_SERVER_START, False, str(e))
+                return
 
-        try:
-            await self._run_session(ClientSession(read, write), result)
-        finally:
-            await cm.__aexit__(None, None, None)
+            # --- Initialize ---
+            try:
+                async with asyncio.timeout(self._t):
+                    session = await stack.enter_async_context(ClientSession(read, write))
+                    init_result = await session.initialize()
+                server_name = getattr(getattr(init_result, "serverInfo", None), "name", "?")
+                result.add(_CHECK_MCP_INIT, True, f"server: {server_name}")
+            except TimeoutError:
+                result.add(_CHECK_MCP_INIT, False, f"timeout after {self._t:.0f}s")
+                return
+            except Exception as e:
+                result.add(_CHECK_MCP_INIT, False, str(e))
+                return
 
-    async def _run_session(self, session_cm, result: FunctionalTestResult) -> None:
-        # --- Initialize ---
-        try:
-            async with asyncio.timeout(self._t):
-                session = await session_cm.__aenter__()
-                init_result = await session.initialize()
-            server_name = getattr(getattr(init_result, "serverInfo", None), "name", "?")
-            result.add(_CHECK_MCP_INIT, True, f"server: {server_name}")
-        except TimeoutError:
-            result.add(_CHECK_MCP_INIT, False, f"timeout after {self._t:.0f}s")
-            return
-        except Exception as e:
-            result.add(_CHECK_MCP_INIT, False, str(e))
-            return
-
-        try:
             await self._run_tools(session, result)
-        finally:
-            await session_cm.__aexit__(None, None, None)
 
     async def _run_tools(self, session, result: FunctionalTestResult) -> None:
         # --- tools/list ---

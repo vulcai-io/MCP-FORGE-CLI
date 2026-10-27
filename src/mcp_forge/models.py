@@ -122,6 +122,7 @@ class ForgeConfig(BaseModel):
     extra_headers: dict[str, str] = Field(default_factory=dict)  # headers HTTP custom (ex: GraphQL auth)
     lang: str = "en"                     # langue des commentaires générés (en | fr)
     bundle_source: bool = False          # copier la codebase source dans output_dir/source/ (opt-in, --bundle-source)
+    wait_for_eval: bool = True           # pipeline distant : attendre l'évaluation asynchrone (--no-wait)
 
 
 class GeneratedServer(BaseModel):

@@ -109,7 +109,8 @@ class FortranParser:
         for m in _SUBR_RE.finditer(normalized):
             name = m.group(1)
             raw_params = m.group(2) or ""
-            _add_unit(name, "subroutine", raw_params, prefix, relative_path, seen, tools, real_module)
+            _add_unit(name, "subroutine", raw_params, prefix, relative_path, seen, tools, real_module,
+                      _declared_types(_unit_body(normalized, m.end())))
 
         # Functions
         for m in _FUNC_RE.finditer(normalized):
@@ -117,7 +118,8 @@ class FortranParser:
             raw_params = m.group(2) or ""
             if not name:
                 continue
-            _add_unit(name, "function", raw_params, prefix, relative_path, seen, tools, real_module)
+            _add_unit(name, "function", raw_params, prefix, relative_path, seen, tools, real_module,
+                      _declared_types(_unit_body(normalized, m.end())))
 
         return tools
 
@@ -162,6 +164,86 @@ def _detect_module(source: str) -> str:
     return m.group(1) if m else ""
 
 
+# Fin de l'unité courante (END FUNCTION / END SUBROUTINE / END seul)
+_UNIT_END_RE = re.compile(r'^\s*END\s*(?:FUNCTION|SUBROUTINE)?\b', re.IGNORECASE | re.MULTILINE)
+
+# Déclarations de variables. Fortran 90+ : type [(kind/len)] [, attributs]
+# :: liste — les attributs peuvent eux-mêmes contenir ':' (dimension(:)).
+# Fortran 77 : type[*n] liste, sans '::'.
+_TYPE_KEYWORD = r'(INTEGER|REAL|DOUBLE\s+PRECISION|LOGICAL|CHARACTER|COMPLEX)'
+_KIND = r'(?:\s*\*\s*\d+|\s*\([^)]*\))?'
+_DECL_RE = re.compile(
+    r'^\s*' + _TYPE_KEYWORD + _KIND + r'\s*(?:,\s*(.*?))?\s*::\s*(\S.*)$',
+    re.IGNORECASE | re.MULTILINE,
+)
+_DECL_F77_RE = re.compile(
+    r'^\s*' + _TYPE_KEYWORD + _KIND + r'\s+([A-Za-z_](?:(?!::).)*)$',
+    re.IGNORECASE | re.MULTILINE,
+)
+
+_FORTRAN_TYPES = {
+    "INTEGER": ParameterType.INTEGER,
+    "REAL": ParameterType.NUMBER,
+    "DOUBLE PRECISION": ParameterType.NUMBER,
+    "LOGICAL": ParameterType.BOOLEAN,
+    "CHARACTER": ParameterType.STRING,
+}
+
+
+def _unit_body(source: str, start: int) -> str:
+    """Texte de l'unité qui commence à `start`, jusqu'à son END."""
+    end = _UNIT_END_RE.search(source, start)
+    return source[start:end.start() if end else len(source)]
+
+
+def _split_top_level(text: str) -> list[str]:
+    """Découpe sur les virgules hors parenthèses (`a(:), b, c(2, 3)`)."""
+    parts, depth, current = [], 0, []
+    for ch in text:
+        if ch == "(":
+            depth += 1
+        elif ch == ")":
+            depth -= 1
+        if ch == "," and depth == 0:
+            parts.append("".join(current))
+            current = []
+        else:
+            current.append(ch)
+    parts.append("".join(current))
+    return [p.strip() for p in parts if p.strip()]
+
+
+def _declared_types(body: str) -> dict[str, tuple[ParameterType, ParameterType | None, str]]:
+    """{NOM: (type MCP, type des éléments si tableau, déclaration)} lus dans
+    les déclarations de l'unité. Fortran ne type pas les arguments dans la
+    signature : sans ça, tous les paramètres retombaient sur `str` et le
+    pilote généré passait `IS_PRIME("42")` à une fonction qui attend un
+    INTEGER (relevé le 2026-10-13 en régénérant l'exemple Fortran ; seul
+    l'enrichissement LLM corrigeait parfois les types, de façon aléatoire)."""
+    types: dict[str, tuple[ParameterType, ParameterType | None, str]] = {}
+    matches = [(m.group(1), m.group(2), m.group(3)) for m in _DECL_RE.finditer(body)]
+    matches += [(m.group(1), "", m.group(2)) for m in _DECL_F77_RE.finditer(body)]
+    for type_word, attributes, names in matches:
+        base_name = re.sub(r"\s+", " ", type_word.upper())
+        base = _FORTRAN_TYPES.get(base_name)
+        if base is None:
+            continue
+        attrs = (attributes or "").upper()
+        for var in _split_top_level(names):
+            var_name = re.match(r"(\w+)", var)
+            if not var_name:
+                continue
+            is_array = "DIMENSION" in attrs or "(" in var
+            if base is ParameterType.STRING and "(" in var and "DIMENSION" not in attrs:
+                is_array = False  # CHARACTER s(*) : longueur, pas un tableau
+            declared = f"{base_name} {var.strip()}"
+            if is_array:
+                types[var_name.group(1).upper()] = (ParameterType.ARRAY, base, declared)
+            else:
+                types[var_name.group(1).upper()] = (base, None, declared)
+    return types
+
+
 def _add_unit(
     name: str,
     kind: str,
@@ -171,6 +253,7 @@ def _add_unit(
     seen: set[str],
     tools: list[DiscoveredTool],
     module_name: str = "",
+    declared: dict | None = None,
 ) -> None:
     if name.upper() in _RESERVED_FORTRAN:
         return
@@ -183,7 +266,7 @@ def _add_unit(
         return
     seen.add(slug)
 
-    params = _parse_params(raw_params)
+    params = _parse_params(raw_params, declared or {})
 
     tools.append(DiscoveredTool(
         name=slug,
@@ -200,8 +283,11 @@ def _add_unit(
     ))
 
 
-def _parse_params(raw: str) -> list[ToolParameter]:
-    """Parse les arguments Fortran (noms seulement, pas de types dans la signature)."""
+def _parse_params(raw: str, declared: dict | None = None) -> list[ToolParameter]:
+    """Parse les arguments Fortran : noms dans la signature, types dans les
+    déclarations de l'unité (`declared`, voir _declared_types) ; chaîne par
+    défaut quand aucune déclaration n'est trouvée."""
+    declared = declared or {}
     if not raw.strip():
         return []
 
@@ -219,10 +305,12 @@ def _parse_params(raw: str) -> list[ToolParameter]:
         if slug in _RESERVED:
             slug = slug + "_"
 
+        ptype, items_type, declaration = declared.get(part.upper(), (ParameterType.STRING, None, part.upper()))
         params.append(ToolParameter(
             name=slug,
-            type=ParameterType.STRING,
-            description=part.upper(),
+            type=ptype,
+            items_type=items_type,
+            description=declaration,
             required=True,
         ))
 

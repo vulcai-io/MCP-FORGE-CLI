@@ -35,9 +35,21 @@ The generated server is written to `../mcp-forge-output/<server_name>/` by defau
 
 **23 languages for codebase analysis**, including legacy ones: Python, JavaScript, TypeScript, Go, Rust, Java, C/C++, C#, PHP, Ruby, Kotlin, Swift, Scala, Dart, Elixir, R, **Fortran**, Bash, PowerShell, Groovy, Julia, Lua and **COBOL**.
 
+> **Codebases need CLI 0.4.0 or later.** Older versions are refused with HTTP 426 and a message asking you to upgrade (`pip install -U vulcai-mcp-forge-cli`). No quota is consumed. The other sources work with any version.
+
 ## Automatic quality evaluation
 
-A generated server is never perfect for every configuration, so mcp-forge evaluates its own output. Each server is scored from 0 to 10 on six criteria, and servers scoring below 6/10 are automatically refined before delivery.
+A generated server is never perfect for every configuration, so mcp-forge evaluates its own output. Each server is scored from 0 to 10 on six criteria.
+
+The evaluation runs after generation. `mcp-forge run` receives the server first, waits for the evaluation with a progress display, then writes the final version and prints the score. When the evaluation leads to a refinement, the final version is the refined server.
+
+Don't want to wait? Stop at the provisional version and fetch the final one later:
+
+```bash
+mcp-forge run https://petstore3.swagger.io/api/v3/openapi.json --no-wait   # prints a generation id
+mcp-forge status <generation_id> --output ../mcp-forge-output/petstore     # waits, then writes the final version
+mcp-forge status <generation_id> --no-wait                                 # current state only
+```
 
 | Criterion | What is checked |
 |---|---|
@@ -48,7 +60,7 @@ A generated server is never perfect for every configuration, so mcp-forge evalua
 | Spec fidelity | Types, body vs query parameters, path parameters |
 | Robustness | Timeout handling, error handling, default values |
 
-Run the evaluator on any server and save the report:
+Besides the model's judgement, the evaluator runs mechanical checks (compilation, undefined names, isolated import, verification of each reported bug) and tests the server's HTTP layer. Run it on any server and save the report:
 
 ```bash
 mcp-forge evaluate output/my_server/server.py --save report.json
@@ -60,25 +72,26 @@ You can also check that a server starts and speaks MCP correctly with `mcp-forge
 
 ## Use the generated server
 
-Every generated server exposes OAuth 2.0 (Authorization Code + PKCE), rate limiting, multi-tenant token isolation and SSE transport. It works with Claude Desktop, Claude Code, Cursor, VS Code, Windsurf and any MCP client. For example, in Claude Desktop:
+Every generated server exposes OAuth 2.0 (Authorization Code + PKCE), rate limiting, multi-tenant token isolation and the Streamable HTTP transport on `/mcp`. It works with Claude Desktop, Claude Code, Cursor, VS Code, Windsurf and any MCP client. For example, in Claude Desktop, with the absolute path of your server directory:
 
 ```json
 {
   "mcpServers": {
     "my_api": {
       "command": "uv",
-      "args": ["run", "--with", "mcp", "mcp", "run", "server.py"],
-      "cwd": "/path/to/mcp-forge-output/my_api"
+      "args": ["--directory", "/absolute/path/to/mcp-forge-output/my_api", "run", "--no-project", "--with-requirements", "requirements.txt", "--with", "mcp[cli]", "mcp", "run", "server.py"]
     }
   }
 }
 ```
 
+`uv` installs the versions pinned in the server's `requirements.txt`, and `mcp run` serves it over stdio.
+
 Configuration for the other clients is in the [full CLI documentation on PyPI](https://pypi.org/project/vulcai-mcp-forge-cli/).
 
 ## What leaves your machine
 
-Source analysis runs locally. To enrich and generate the server, the CLI sends the Vulcai API a sanitized description of what it discovered: operation names, parameters, descriptions and, for codebases, relative file and function names. Request headers, credentials and absolute paths are excluded from that payload. See the [Trust & Security page](https://mcp-forge.vulcai.io/trust) for data retention, model access and subprocessors.
+Source analysis runs locally. To enrich and generate the server, the CLI sends the Vulcai API a sanitized description of what it discovered: operation names, parameters, descriptions and, for codebases, the language plus relative file and function names. Request headers, credentials and absolute paths are excluded from that payload. See the [Trust & Security page](https://mcp-forge.vulcai.io/trust) for data retention, model access and subprocessors.
 
 ## Limitations
 

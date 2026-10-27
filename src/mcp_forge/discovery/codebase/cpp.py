@@ -80,6 +80,12 @@ _OUTPUT_PRIMITIVE_RE = re.compile(
 
 
 class CppParser:
+    def __init__(self) -> None:
+        # Opérations écartées, par raison (chiffres de couverture donnés à
+        # l'évaluateur, voir CodebaseDiscovery.discover).
+        from collections import Counter
+        self.exclusions: Counter = Counter()
+
     """Extrait les fonctions publiques de fichiers C/C++ via regex."""
 
     def extract(self, path: Path, root: Path) -> list[DiscoveredTool]:
@@ -100,11 +106,11 @@ class CppParser:
         # trouvées dans `cleaned`. Une substitution qui change la longueur
         # (l'ancien comportement : bloc remplacé par un seul espace, ligne
         # retirée entièrement) désynchronise ces deux textes dès qu'un
-        # commentaire précède le code pertinent — trouvé sur un vrai moteur
-        # C++ (ocgcore, progressivebuffer.h, qui commence par un bloc de
-        # licence de 4 lignes) : `_find_class_at_pos` retombait sur une
-        # classe vide pour `ProgressiveBuffer::clear()`, laissant passer
-        # une méthode de classe comme une fonction libre.
+        # commentaire précède le code pertinent — trouvé sur un vrai projet
+        # C++ (un en-tête qui commence par un bloc de licence de 4 lignes) :
+        # `_find_class_at_pos` retombait sur une classe vide pour une méthode
+        # `Classe::clear()`, laissant passer une méthode de classe comme une
+        # fonction libre.
         def _blank(m: re.Match) -> str:
             return "".join(c if c == "\n" else " " for c in m.group(0))
 
@@ -121,11 +127,10 @@ class CppParser:
         # commentaire a été retiré avant la classe (licence en-tête de
         # fichier, Doxygen...). Chercher le contexte de classe dans
         # `source` avec ces offsets de `cleaned` les désynchronise
-        # silencieusement — trouvé sur un vrai moteur C++ (ocgcore,
-        # progressivebuffer.h, qui commence par un bloc de licence de 4
-        # lignes) : `_find_class_at_pos` retombait sur class="" pour
-        # `ProgressiveBuffer::clear()`, laissant passer une méthode de
-        # classe comme si c'était une fonction libre.
+        # silencieusement — trouvé sur un vrai projet C++ (un en-tête qui
+        # commence par un bloc de licence de 4 lignes) : `_find_class_at_pos`
+        # retombait sur class="" pour une méthode `Classe::clear()`, laissant
+        # passer une méthode de classe comme si c'était une fonction libre.
         class_context = _detect_class_context(cleaned)
 
         for m in _FUNC_DECL_RE.finditer(cleaned):
@@ -136,7 +141,7 @@ class CppParser:
             # Filtre
             if not raw_name or raw_name.lower() in _SKIP_NAMES:
                 continue
-            # Trouvé en testant sur un vrai moteur C++ (ocgcore) : une
+            # Trouvé en testant sur un vrai projet C++ : une
             # liste d'initialisation de constructeur ("noexcept : s(x) {")
             # peut se faire capturer comme "mot mot(params) {" avec le ":"
             # de l'initializer-list avalé dans le groupe "type de retour"
@@ -160,8 +165,8 @@ class CppParser:
             # groupe "type de retour" (groupe 1), ce qui arrive justement
             # pour "if constexpr(...)" : "if" -> groupe 1, "constexpr" ->
             # groupe 2 (capturé comme nom de fonction). Trouvé en testant
-            # sur un vrai moteur C++ (ocgcore) : un faux tool "constexpr"
-            # généré depuis `if constexpr(LuaFunction<...>::initialized)`.
+            # sur un vrai projet C++ : un faux tool "constexpr" généré depuis
+            # `if constexpr(Trait<...>::value)`.
             return_type_words = return_type.split()
             if return_type_words and return_type_words[-1].lower() in _SKIP_NAMES:
                 continue
@@ -169,7 +174,7 @@ class CppParser:
             # n'ont, comme les méthodes de classe, aucun symbole exporté
             # stable sous leur nom tel quel — chaque instanciation génère
             # son propre code, souvent inliné, jamais sous le nom brut
-            # "foo". Trouvé sur un vrai moteur C++ (ocgcore, bit.h) :
+            # "foo". Trouvé sur un vrai projet C++ :
             # `template<typename T> constexpr inline uint8_t popcnt(T val)`
             # — en plus de n'être pas dispatchable, le paramètre type `T`
             # (un paramètre de template, pas un type concret) retombait
@@ -183,6 +188,7 @@ class CppParser:
             # groupe retour, qui autorise `<>` pour les types qualifiés,
             # capture "template<typename T> T" en entier).
             if "template" in return_type.lower() or _is_template_declaration(cleaned, m.start()):
+                self.exclusions["template functions (no exported symbol under their name)"] += 1
                 continue
             # Nom de tool (slug)
             class_name = raw_name.split("::")[0] if "::" in raw_name else ""
@@ -195,9 +201,9 @@ class CppParser:
             # header) ne sont QUASIMENT jamais dispatchables via ctypes : nom
             # mangled en C++ (pas de symbole exporté sous ce nom tel quel),
             # et il manque le pointeur "this" même quand un symbole existe.
-            # Trouvé en testant sur un vrai moteur C++ (ocgcore, moteur du
-            # jeu Yu-Gi-Oh!) : 486 des 652 tools extraits (74%) étaient des
-            # méthodes de classe garanties non-fonctionnelles — l'ancien
+            # Trouvé en testant sur un vrai projet C++ : 486 des 652 tools
+            # extraits (74%) étaient des méthodes de classe garanties
+            # non-fonctionnelles — l'ancien
             # filtre ne couvrait que les définitions QUALIFIÉES hors-classe
             # ("ClassName::method() {" dans un .cpp), pas les déclarations
             # NON qualifiées à l'intérieur du corps de la classe dans un
@@ -205,6 +211,7 @@ class CppParser:
             # pourtant déjà détectées par `_find_class_at_pos` ci-dessus
             # sans jamais être utilisées pour filtrer.
             if class_name:
+                self.exclusions["class methods (mangled name, no `this`: not callable through ctypes)"] += 1
                 continue
 
             slug = _SLUG_RE.sub("_", raw_name.lower()).strip("_")

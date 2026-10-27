@@ -38,8 +38,10 @@ def run_local(result: DiscoveryResult, config: ForgeConfig) -> GeneratedServer:
         server_code = generated.files.get("server.py", "")
         if server_code:
             try:
-                from mcp_forge.evaluate import evaluate_code
-                eval_report = evaluate_code(server_code)
+                from mcp_forge.evaluate import coverage_context, evaluate_code
+                eval_report = evaluate_code(
+                    server_code, context=coverage_context(result.metadata.get("coverage"), server_code),
+                )
                 generated = generated.model_copy(update={"eval_report": eval_report})
             except Exception:
                 pass  # évaluation optionnelle, ne bloque pas la génération

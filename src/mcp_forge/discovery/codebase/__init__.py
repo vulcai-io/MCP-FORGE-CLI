@@ -105,6 +105,15 @@ _PARSERS = {
 }
 
 
+def coverage_summary(generated: int, exclusions: dict) -> dict:
+    """Chiffres de couverture transmis à l'évaluateur : il juge alors la
+    qualité des tools vus au lieu d'en estimer le nombre depuis un extrait
+    (mesuré : la couverture d'une vraie API Java (~2000 fichiers) variait de 7,5 à 9,5 d'un passage à
+    l'autre). Les fichiers ignorés ne sont pas des opérations."""
+    operations = {k: v for k, v in exclusions.items() if "not counted as operations" not in k}
+    return {"discovered": generated + sum(operations.values()), "generated": generated, "excluded": exclusions}
+
+
 def _drop_call_stubs_shadowed_by_subprograms(tools: list[DiscoveredTool]) -> list[DiscoveredTool]:
     """Supprime les stubs CALL externes (`metadata["type"] == "call"`,
     jamais exécutables) quand le programme appelé est AUSSI présent dans
@@ -171,8 +180,12 @@ class CodebaseDiscovery:
                 tools += parser.extract(f, self.root)
                 progress.advance(task)
 
+        exclusions = dict(getattr(parser, "exclusions", {}) or {})
         if language == "cobol":
+            before = len(tools)
             tools = _drop_call_stubs_shadowed_by_subprograms(tools)
+            if before > len(tools):
+                exclusions["CALL stubs replaced by the matching subprogram"] = before - len(tools)
 
         # Déduplication globale : si deux outils ont le même nom, ajoute un suffixe numérique
         seen_global: dict[str, int] = {}
@@ -196,7 +209,7 @@ class CodebaseDiscovery:
             title=title,
             description=f"Fonctions publiques extraites de {title} ({language})",
             tools=tools,
-            metadata={"language": language},
+            metadata={"language": language, "coverage": coverage_summary(len(tools), exclusions)},
         )
 
     def _detect_language(self) -> str:

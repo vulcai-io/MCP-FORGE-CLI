@@ -100,6 +100,9 @@ def run(
     local: Annotated[bool, typer.Option("--local", help="Forcer le pipeline local (pas d'appel à l'API Vulcai)")] = False,
     lang: Annotated[str, typer.Option("--lang", help="Langue des commentaires générés : en (défaut) ou fr")] = "en",
     bundle_source: Annotated[bool, typer.Option("--bundle-source", help="Copier le code source (codebase) dans le serveur généré — désactivé par défaut, votre code ne quitte pas la machine")] = False,
+    eval_provider: Annotated[Optional[str], typer.Option("--eval-provider", help="Fournisseur d'évaluation imposé (ex. un autre que celui de la génération) : anthropic, groq, openai, mistral, local")] = None,
+    eval_model: Annotated[Optional[str], typer.Option("--eval-model", help="Modèle d'évaluation imposé")] = None,
+    no_wait: Annotated[bool, typer.Option("--no-wait", help="Pipeline distant : écrire la version provisoire sans attendre l'évaluation (récupérer la finale avec « mcp-forge status »)")] = False,
 ):
     """
     Lance la génération d'un serveur MCP depuis une [bold]source[/bold].
@@ -120,11 +123,18 @@ def run(
                        name_style, smoke_test, functional_test)
 
     bundle_source = bundle_source or yaml_cfg.get("bundle_source", False)
+    # Évaluateur imposé : transmis au pipeline (local.py → evaluate_code)
+    # par les variables d'environnement lues dans mcp_forge/evaluate.py.
+    if eval_provider:
+        os.environ["MCP_FORGE_EVAL_PROVIDER"] = eval_provider
+    if eval_model:
+        os.environ["MCP_FORGE_EVAL_MODEL"] = eval_model
     config, no_llm = _build_config(yaml_cfg, source, mode, output, source_type, name,
                                    no_llm, name_style, api_key, force_local=local, lang=lang,
                                    bundle_source=bundle_source)
+    config.wait_for_eval = not no_wait
 
-    _print_summary(source, config.source_type, mode, output, no_llm, name_style)
+    _print_summary(source, config.source_type, mode, output, no_llm, name_style, force_local=local)
 
     generated = _dispatch(config, mode)
 
@@ -200,11 +210,15 @@ def _build_config(
     resolved_key = api_key or yaml_cfg.get("api_key") or os.environ.get("ANTHROPIC_API_KEY")
 
     if not no_llm and not resolved_key and not os.environ.get("GROQ_API_KEY"):
-        console.print(
-            "[yellow]⚠ Aucune clé API trouvée.[/yellow] "
-            "L'enrichissement LLM sera désactivé. "
-            "Définissez ANTHROPIC_API_KEY ou GROQ_API_KEY dans votre .env."
-        )
+        # Avertissement réservé au pipeline local : en mode distant, c'est
+        # l'API qui enrichit, avec ses propres clés (message affiché à tort
+        # à tous les utilisateurs distants jusqu'à la 0.4.0).
+        if _is_local_mode(force_local):
+            console.print(
+                "[yellow]⚠ Aucune clé API trouvée.[/yellow] "
+                "L'enrichissement LLM sera désactivé. "
+                "Définissez ANTHROPIC_API_KEY ou GROQ_API_KEY dans votre .env."
+            )
         no_llm = True
 
     config = ForgeConfig(
@@ -223,15 +237,23 @@ def _build_config(
     return config, no_llm
 
 
+def _is_local_mode(force_local: bool) -> bool:
+    """Même règle que mcp_forge.pipeline.selector : --local ou FORGE_MODE=local."""
+    return force_local or os.environ.get("FORGE_MODE", "").lower() == "local"
+
+
 def _print_summary(
     source: str, resolved_type: SourceType, mode: ForgeMode,
-    output: str, no_llm: bool, name_style: NameStyle,
+    output: str, no_llm: bool, name_style: NameStyle, force_local: bool = False,
 ) -> None:
     console.print(f"[dim]Source     :[/dim] {source}")
     console.print(f"[dim]Type       :[/dim] {resolved_type.value}")
     console.print(f"[dim]Mode       :[/dim] {mode.value}")
     console.print(f"[dim]Sortie     :[/dim] {output}")
-    console.print(f"[dim]Enrichiss. :[/dim] {'LLM (Claude)' if not no_llm else 'désactivé'}")
+    if not _is_local_mode(force_local):
+        console.print("[dim]Enrichiss. :[/dim] LLM, par l'API mcp-forge")
+    else:
+        console.print(f"[dim]Enrichiss. :[/dim] {'LLM (Claude)' if not no_llm else 'désactivé'}")
     if not no_llm:
         console.print(f"[dim]Nommage    :[/dim] {name_style.value}")
     console.print()
@@ -274,24 +296,61 @@ def test(
         raise typer.Exit(1)
     server_dir = server_path.resolve().parent
     console.print(f"[dim]Lancement de MCP Inspector sur :[/dim] {server_dir / 'server.py'}")
-    # Installe les dépendances si requirements.txt présent (met en cache pour uv)
-    req_file = server_dir / "requirements.txt"
-    if req_file.exists():
-        import sys
-        subprocess.run(
-            [sys.executable, "-m", "pip", "install", "-q", "-r", str(req_file)],
-            cwd=str(server_dir),
-        )
-    # Lance le MCP Inspector via npx + uv python (évite le prérequis mcp[cli])
-    # shell=True requis sur Windows car npx est un .cmd et non un exécutable natif
-    result = subprocess.run(
-        ["npx", "-y", "@modelcontextprotocol/inspector",
-         "uv", "run", "--with", "mcp", "python", "server.py"],
-        cwd=str(server_dir),
-        shell=True,
-    )
+    # Les dépendances du serveur sont installées par uv dans un environnement
+    # éphémère (--with-requirements), plus dans celui de la CLI.
+    command = _inspector_command(server_dir)
+    if command is None:
+        console.print("[red][FAIL] npx introuvable :[/red] installez Node.js (https://nodejs.org) pour lancer MCP Inspector.")
+        raise typer.Exit(1)
+    result = subprocess.run(command, cwd=str(server_dir), env=_inspector_env())
     if result.returncode != 0:
         raise typer.Exit(result.returncode)
+
+
+def _inspector_env() -> dict[str, str]:
+    """Environnement d'Inspector, donc du serveur qu'il lance via uv.
+
+    Sans PYTHONHOME : sous Windows, le Python géré par uv de la CLI le définit
+    pour lui-même ; hérité par le Python de l'environnement éphémère du
+    serveur, il lui masquait ses paquets et le serveur se fermait aussitôt
+    (Inspector : « Connection closed »)."""
+    return {k: v for k, v in os.environ.items() if k.upper() != "PYTHONHOME"}
+
+
+# Version de MCP Inspector fixée : celle validée sur Windows, Linux et macOS
+# (workflow « CLI · test multi-plateforme »). Sans version, npx prendrait la
+# dernière publiée (2.12.0 le 2026-10-27), non testée avec mcp-forge.
+INSPECTOR_VERSION = "1.0.3"
+
+
+def _inspector_command(server_dir: Path | None = None) -> list[str] | None:
+    """Commande MCP Inspector (npx + uv), ou None si npx est introuvable.
+
+    Transport stdio via `mcp run server.py`, qui démarre l'objet FastMCP du
+    serveur. `python server.py` démarre le serveur HTTP (uvicorn) des
+    serveurs générés : Inspector, en stdio, n'obtenait aucune réponse.
+
+    Le serveur tourne avec SES dépendances : `--with-requirements
+    requirements.txt` quand le fichier existe (tout serveur généré fixe
+    `mcp~=1.x`). Un simple `--with mcp` prenait la dernière version publiée,
+    mcp 2.x depuis 2026-10, où `mcp.server.fastmcp` n'existe plus. `mcp[cli]`
+    ajoute la commande `mcp run` ; uv l'aligne sur la version fixée.
+
+    npx est résolu en chemin complet et lancé sans shell. Sous Windows, on
+    cherche explicitement `npx.cmd` : Node.js installe aussi un script `npx`
+    sans extension (pour les shells POSIX) que `shutil.which("npx")` peut
+    renvoyer et que Windows ne sait pas exécuter (WinError 193). Auparavant
+    `shell=True` avec une liste : sous Linux et macOS, le shell ne recevait
+    que « npx », sans aucun argument, et Inspector ne démarrait pas."""
+    import shutil
+    npx = shutil.which("npx.cmd" if sys.platform == "win32" else "npx")
+    if npx is None:
+        return None
+    deps = ["--with", "mcp[cli]"]
+    if server_dir is not None and (server_dir / "requirements.txt").is_file():
+        deps = ["--with-requirements", "requirements.txt", *deps]
+    return [npx, "-y", f"@modelcontextprotocol/inspector@{INSPECTOR_VERSION}",
+            "uv", "run", "--no-project", *deps, "mcp", "run", "server.py"]
 
 
 @app.command(name="smoke-test")
@@ -474,6 +533,39 @@ def list_servers(
     console.print(table)
 
 
+@app.command()
+def status(
+    generation_id: Annotated[str, typer.Argument(help="Identifiant de la génération (affiché par « run --no-wait »)")],
+    output: Annotated[Optional[str], typer.Option("--output", "-o", help="Dossier où écrire la version finale")] = None,
+    no_wait: Annotated[bool, typer.Option("--no-wait", help="Afficher l'état sans attendre la fin de l'évaluation")] = False,
+):
+    """
+    État de l'évaluation d'une génération distante. Attend la version
+    finale et, avec --output, l'écrit dans ce dossier.
+    """
+    from mcp_forge.pipeline.remote import (
+        _DEFAULT_API_URL, RemoteError, _download_bundle, _print_evaluation, get_evaluation, wait_for_evaluation,
+    )
+    license_key = os.environ.get("FORGE_LICENSE_KEY", "")
+    if not license_key:
+        console.print("[red][FAIL] FORGE_LICENSE_KEY manquante (mcp-forge set-license mfg_live_...)[/red]")
+        raise typer.Exit(1)
+    api_url = os.environ.get("FORGE_API_URL", _DEFAULT_API_URL).rstrip("/")
+    url = f"{api_url}/v1/generations/{generation_id}/evaluation"
+    try:
+        view = get_evaluation(url, license_key) if no_wait else wait_for_evaluation(url, license_key)
+        if view.get("status") in ("queued", "running"):
+            console.print(f"Évaluation {view['status']} — version provisoire.")
+            return
+        _print_evaluation(view)
+        if output:
+            _download_bundle(view["bundle_url"], license_key, Path(output))
+            console.print(f"[green][OK] Version finale écrite dans : {output}[/green]")
+    except RemoteError as exc:
+        console.print(f"[red][FAIL] {exc}[/red]")
+        raise typer.Exit(1)
+
+
 @app.command(name="set-license")
 def set_license(
     key: Annotated[str, typer.Argument(help="Clé de licence (format : mfg_live_... ou mfg_test_...)")],
@@ -531,6 +623,8 @@ def evaluate(
     output_json: Annotated[bool, typer.Option("--json", help="Sortie JSON brute (pour CI/CD)")] = False,
     save: Annotated[Optional[str], typer.Option("--save", "-s", metavar="FILE", help="Sauvegarder le rapport JSON")] = None,
     api_key: Annotated[Optional[str], typer.Option("--api-key", help="Clé API Anthropic")] = None,
+    eval_provider: Annotated[Optional[str], typer.Option("--eval-provider", help="Fournisseur d'évaluation imposé : anthropic, groq, openai, mistral, local")] = None,
+    eval_model: Annotated[Optional[str], typer.Option("--eval-model", help="Modèle d'évaluation imposé")] = None,
 ):
     """Évalue la qualité d'un serveur MCP généré par mcp-forge."""
     from mcp_forge.evaluate import evaluate as _evaluate
@@ -540,6 +634,8 @@ def evaluate(
         output_json=output_json,
         api_key=api_key,
         save=save,
+        provider=eval_provider,
+        model=eval_model,
     )
 
 
