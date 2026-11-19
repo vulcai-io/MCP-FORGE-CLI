@@ -15,12 +15,13 @@ import zipfile
 from pathlib import Path
 
 import httpx
+from pydantic import ValidationError
 from rich.console import Console
 
 from mcp_forge.models import DiscoveryResult, ForgeConfig, GeneratedServer, SourceType
+from mcp_forge.schemas.payload import DiscoveryPayload
 
 console = Console(stderr=True)
-from mcp_forge.schemas.payload import DiscoveryPayload
 
 _DEFAULT_API_URL = "https://api.mcp-forge.vulcai.io"
 _TIMEOUT = 60.0
@@ -36,6 +37,15 @@ class RemoteError(Exception):
     """Erreur levée par le pipeline distant (affichée après la fin du spinner)."""
 
 
+def _payload_error_message(exc: ValidationError) -> str:
+    """Message lisible pour un payload refusé par sa propre validation."""
+    first = exc.errors()[0] if exc.errors() else {}
+    where = ".".join(str(x) for x in first.get("loc", ())) or "payload"
+    return (f"The source exceeds an API limit ({where}: {first.get('msg', 'invalid')}).\n"
+            "  Generate fewer operations: --include-tags / --include-paths "
+            "(or --exclude-tags / --exclude-paths).")
+
+
 def run_remote(result: DiscoveryResult, config: ForgeConfig) -> GeneratedServer:
     """Envoie le payload à l'API Azure et écrit les fichiers générés localement."""
     api_url = os.environ.get("FORGE_API_URL", _DEFAULT_API_URL).rstrip("/")
@@ -43,13 +53,20 @@ def run_remote(result: DiscoveryResult, config: ForgeConfig) -> GeneratedServer:
 
     if not license_key:
         raise RemoteError(
-            "FORGE_LICENSE_KEY manquante.\n"
-            "  Obtenez votre clé sur https://mcp-forge.vulcai.io puis :\n"
+            "FORGE_LICENSE_KEY missing.\n"
+            "  Get your key at https://mcp-forge.vulcai.io, then:\n"
             "  mcp-forge set-license mfg_live_...\n"
-            "  (Relancez depuis le dossier où se trouve votre .env)"
+            "  (Run again from the folder that holds your .env)"
         )
 
-    payload = DiscoveryPayload.from_discovery_result(result)
+    try:
+        payload = DiscoveryPayload.from_discovery_result(
+            result, instructions=config.server_instructions, tool_instructions=config.tool_instructions,
+            use_llm=not config.no_llm, no_output_schema=config.no_output_schema)
+    except ValidationError as exc:
+        # Dernier recours : la découverte respecte déjà les limites du payload
+        # (mcp_forge/discovery/limits.py) ; jamais de trace Python brute
+        raise RemoteError(_payload_error_message(exc)) from exc
     if result.source_type == SourceType.CODEBASE:
         # Codebase : souvent volumineuse (enrichissement LLM long). Passe par
         # un job asynchrone, sans la limite de 220 s de POST /v1/generate.
@@ -68,25 +85,40 @@ def run_remote(result: DiscoveryResult, config: ForgeConfig) -> GeneratedServer:
             verify=True,
         )
     except httpx.ConnectError:
-        raise RemoteError(f"Impossible de joindre l'API ({api_url}). Vérifiez votre connexion.")
+        raise RemoteError(f"Could not reach the API ({api_url}). Check your connection.") from None
     except httpx.TimeoutException:
         raise RemoteError(
-            f"L'API n'a pas répondu dans les délais ({int(_GENERATE_TIMEOUT)}s). "
-            "Réessayez plus tard."
-        )
+            f"The API did not respond in time ({int(_GENERATE_TIMEOUT)} s). "
+            "Try again later."
+        ) from None
 
     _raise_for_status(response, ok=(200,))
     data = response.json()
     return _download_and_write(data, license_key, config)
 
 
+def _api_detail(response: httpx.Response) -> str | None:
+    """Champ `detail` (texte) d'une réponse d'erreur de l'API : une ligne, sans caractère de
+    contrôle, 500 caractères au plus ; None s'il manque."""
+    try:
+        detail = response.json().get("detail")
+    except Exception:
+        return None
+    if not isinstance(detail, str):
+        return None
+    text = " ".join("".join(c if c.isprintable() else " " for c in detail).split())
+    return text[:500] or None
+
+
 def _raise_for_status(response: httpx.Response, ok: tuple[int, ...]) -> None:
     if response.status_code == 401:
-        raise RemoteError("Clé de licence invalide ou expirée.")
+        raise RemoteError("Invalid or expired license key.")
     if response.status_code == 429:
-        raise RemoteError("Quota atteint pour votre plan. Contactez contact@vulcai.io.")
+        # Message de l'API tel quel (limite journalière de générations, quota de domaines, limite
+        # de débit) : il dit lequel et quand réessayer (0.4.4 ; avant, toujours « quota »)
+        raise RemoteError(_api_detail(response) or "Too many requests (HTTP 429). Contact contact@vulcai.io.")
     if response.status_code not in ok:
-        raise RemoteError(f"Erreur API ({response.status_code}) : {response.text[:200]}")
+        raise RemoteError(f"API error ({response.status_code}): {response.text[:200]}")
 
 
 _JOB_WAIT_TIMEOUT = 900.0
@@ -100,40 +132,40 @@ def _generate_via_job(api_url: str, license_key: str, payload: DiscoveryPayload)
         created = httpx.post(f"{api_url}/v1/jobs", json=payload.model_dump(mode="json"),
                              headers=headers, timeout=_TIMEOUT, verify=True)
     except httpx.ConnectError:
-        raise RemoteError(f"Impossible de joindre l'API ({api_url}). Vérifiez votre connexion.")
+        raise RemoteError(f"Could not reach the API ({api_url}). Check your connection.") from None
     except httpx.TimeoutException:
-        raise RemoteError("L'API n'a pas accepté la génération dans les délais. Réessayez plus tard.")
+        raise RemoteError("The API did not accept the generation in time. Try again later.") from None
     _raise_for_status(created, ok=(200, 202))
     job_id = created.json()["job_id"]
 
     started = time.monotonic()
-    with console.status("Génération du serveur…") as status:
+    with console.status("Generating the server…") as status:
         while True:
             try:
                 job = httpx.get(f"{api_url}/v1/jobs/{job_id}", headers=headers, timeout=_TIMEOUT, verify=True)
             except httpx.HTTPError as exc:
-                raise RemoteError(f"Impossible de lire l'état de la génération : {exc}")
+                raise RemoteError(f"Could not read the generation status: {exc}") from exc
             _raise_for_status(job, ok=(200,))
             state = job.json().get("status")
             if state == "failed":
                 errors = job.json().get("errors") or []
-                messages = "; ".join(e.get("message", "") for e in errors) or "raison inconnue"
-                raise RemoteError(f"La génération a échoué : {messages}")
+                messages = "; ".join(e.get("message", "") for e in errors) or "unknown reason"
+                raise RemoteError(f"The generation failed: {messages}")
             if state == "success":
                 break
             elapsed = time.monotonic() - started
             if elapsed > _JOB_WAIT_TIMEOUT:
                 raise RemoteError(
-                    f"La génération n'est pas terminée après {int(_JOB_WAIT_TIMEOUT)} s (job {job_id}). "
-                    "Réessayez plus tard."
+                    f"The generation is not finished after {int(_JOB_WAIT_TIMEOUT)} s (job {job_id}). "
+                    "Try again later."
                 )
-            status.update(f"Génération du serveur ({'en file' if state == 'pending' else 'en cours'})… {int(elapsed)} s")
+            status.update(f"Generating the server ({'queued' if state == 'pending' else 'running'})… {int(elapsed)} s")
             time.sleep(_POLL_INTERVAL)
 
     try:
         res = httpx.get(f"{api_url}/v1/jobs/{job_id}/result", headers=headers, timeout=_TIMEOUT, verify=True)
     except httpx.HTTPError as exc:
-        raise RemoteError(f"Impossible de lire le résultat de la génération : {exc}")
+        raise RemoteError(f"Could not read the generation result: {exc}") from exc
     _raise_for_status(res, ok=(200,))
     return res.json()
 
@@ -168,8 +200,8 @@ def _download_and_write(data: dict, license_key: str, config: ForgeConfig) -> Ge
     if not bundle_url:
         keys = list(data.keys()) if isinstance(data, dict) else repr(data)[:120]
         raise RemoteError(
-            f"La réponse de l'API ne contient pas de bundle_url.\n"
-            f"  Clés reçues : {keys}\n"
+            f"The API response has no bundle_url.\n"
+            f"  Keys received: {keys}\n"
             f"  success={data.get('success')}, tools_count={data.get('tools_count')}, "
             f"  errors={data.get('errors', [])}"
         )
@@ -190,15 +222,15 @@ def _download_and_write(data: dict, license_key: str, config: ForgeConfig) -> Ge
                 files = _download_bundle(view["bundle_url"], license_key, output_dir)
             eval_report = view.get("eval_report")
             _print_evaluation(view)
-            console.print(f"[green][OK] Version finale écrite dans : {output_dir}[/green]")
+            console.print(f"[green][OK] Final version written to: {output_dir}[/green]")
         else:
-            console.print(f"[yellow]Version provisoire écrite dans : {output_dir}[/yellow] (évaluation en cours)")
+            console.print(f"[yellow]Provisional version written to: {output_dir}[/yellow] (evaluation running)")
             console.print(
-                "  Pour récupérer la version finale et sa note :\n"
+                "  To get the final version and its score:\n"
                 f"  mcp-forge status {data.get('generation_id')} --output {output_dir}"
             )
     else:
-        console.print(f"[green][OK] Serveur généré dans : {output_dir}[/green]")
+        console.print(f"[green][OK] Server generated in: {output_dir}[/green]")
 
     return GeneratedServer(
         server_name=server_name,
@@ -220,13 +252,13 @@ def _download_bundle(bundle_url: str, license_key: str, output_dir: Path) -> dic
             verify=True,
         )
     except httpx.ConnectError:
-        raise RemoteError("Impossible de télécharger le bundle ZIP. Vérifiez votre connexion.")
+        raise RemoteError("Could not download the ZIP bundle. Check your connection.") from None
     except httpx.TimeoutException:
-        raise RemoteError("Timeout lors du téléchargement du bundle ZIP.")
+        raise RemoteError("Timed out while downloading the ZIP bundle.") from None
 
     if zip_response.status_code != 200:
         raise RemoteError(
-            f"Erreur lors du téléchargement du bundle ({zip_response.status_code})."
+            f"Error while downloading the bundle ({zip_response.status_code})."
         )
 
     files: dict[str, str] = {}
@@ -247,7 +279,7 @@ def _download_bundle(bundle_url: str, license_key: str, output_dir: Path) -> dic
 _PENDING = ("queued", "running")
 _POLL_INTERVAL = 3.0
 _EVAL_WAIT_TIMEOUT = 900.0
-_STATUS_LABEL = {"queued": "en file", "running": "en cours"}
+_STATUS_LABEL = {"queued": "queued", "running": "running"}
 
 
 def get_evaluation(evaluation_url: str, license_key: str) -> dict:
@@ -255,11 +287,11 @@ def get_evaluation(evaluation_url: str, license_key: str) -> dict:
         resp = httpx.get(evaluation_url, headers={"Authorization": f"Bearer {license_key}"},
                          timeout=_TIMEOUT, verify=True)
     except httpx.HTTPError as exc:
-        raise RemoteError(f"Impossible de lire l'état de l'évaluation : {exc}")
+        raise RemoteError(f"Could not read the evaluation status: {exc}") from exc
     if resp.status_code == 404:
-        raise RemoteError("Génération introuvable (expirée, ou d'un autre compte).")
+        raise RemoteError("Generation not found (expired, or from another account).")
     if resp.status_code != 200:
-        raise RemoteError(f"Erreur API ({resp.status_code}) : {resp.text[:200]}")
+        raise RemoteError(f"API error ({resp.status_code}): {resp.text[:200]}")
     return resp.json()
 
 
@@ -273,7 +305,7 @@ def wait_for_evaluation(
     """Attend la fin de l'évaluation asynchrone, avec affichage d'avancement.
     Retourne la vue finale ; lève RemoteError au-delà de `timeout`."""
     started = time.monotonic()
-    with console.status("Évaluation du serveur généré…") as status:
+    with console.status("Evaluating the generated server…") as status:
         while True:
             view = get_evaluation(evaluation_url, license_key)
             if view.get("status") not in _PENDING:
@@ -281,22 +313,24 @@ def wait_for_evaluation(
             elapsed = time.monotonic() - started
             if elapsed > timeout:
                 raise RemoteError(
-                    f"L'évaluation n'est pas terminée après {int(timeout)} s. La version provisoire est "
-                    "écrite ; relancez plus tard « mcp-forge status <id> --output <dossier> »."
+                    f"The evaluation is not finished after {int(timeout)} s. The provisional version is "
+                    "written; run \"mcp-forge status <id> --output <folder>\" later."
                 )
             attempt = view.get("attempts") or 0
-            retry = " — relance" if attempt > 1 else ""
-            status.update(f"Évaluation {_STATUS_LABEL.get(view['status'], view['status'])}{retry}… {int(elapsed)} s")
+            retry = ", retrying" if attempt > 1 else ""
+            status.update(f"Evaluation {_STATUS_LABEL.get(view['status'], view['status'])}{retry}… {int(elapsed)} s")
             time.sleep(poll_interval)
 
 
 def _print_evaluation(view: dict) -> None:
     st = view.get("status")
     if st == "done":
-        refined = " (corrigée après évaluation)" if view.get("refined") else ""
-        console.print(f"[bold]Note d'évaluation : {view.get('score')}/10[/bold]{refined}")
+        refined = " (fixed after evaluation)" if view.get("refined") else ""
+        console.print(f"[bold]Evaluation score: {view.get('score')}/10[/bold]{refined}")
     elif st == "failed":
-        console.print("[yellow]L'évaluation a échoué : la version livrée n'est pas notée.[/yellow]")
+        console.print("[yellow]The evaluation failed: the delivered version has no score.[/yellow]")
     elif st == "skipped":
-        reason = {"EVAL_DAILY_LIMIT": "limite journalière d'évaluations atteinte"}.get(view.get("error") or "", view.get("error") or "")
-        console.print(f"[dim]Serveur non évalué{f' ({reason})' if reason else ''}.[/dim]")
+        reason = {"EVAL_DAILY_LIMIT": "daily evaluation limit reached",
+                  "LLM_DISABLED": "LLM evaluation off (--no-llm)"}.get(view.get("error") or "",
+                                                                             view.get("error") or "")
+        console.print(f"[dim]Server not evaluated{f' ({reason})' if reason else ''}.[/dim]")

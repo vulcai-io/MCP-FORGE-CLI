@@ -5,14 +5,12 @@ Mode AUTO : pipeline complet sans aucune intervention de l'utilisateur.
 
 Sortie :
   - Logs / progression >> stderr (Rich)
-  - Résultat JSON      >> stdout (parseable par les pipelines CI/CD)
+  - Résultat JSON      >> stdout, seul (0.4.1, voir mcp_forge/ui/json_stdout.py)
 """
 from __future__ import annotations
 
-import json
-import sys
-
 from rich.console import Console
+from rich.markup import escape
 from rich.progress import Progress, SpinnerColumn, TextColumn
 
 from mcp_forge.models import ForgeConfig, GeneratedServer
@@ -29,18 +27,18 @@ def run_auto(config: ForgeConfig) -> GeneratedServer | None:
     with Progress(SpinnerColumn(), TextColumn("{task.description}"), console=console) as progress:
 
         # 1. Discovery
-        task = progress.add_task("Découverte des capacités...", total=None)
+        task = progress.add_task("Discovering capabilities...", total=None)
         result = discover(config)
-        progress.update(task, description=f"[green][OK] {len(result.tools)} tools découverts[/green]")
+        progress.update(task, description=f"[green][OK] {len(result.tools)} tools discovered[/green]")
         progress.stop_task(task)
 
         if not result.tools:
-            console.print("[yellow]⚠ Aucun tool découvert. Vérifiez la source.[/yellow]")
-            _print_json(None, errors=["Aucun tool découvert"])
+            console.print("[yellow]⚠ No tool discovered. Check the source.[/yellow]")
+            _print_json(None, errors=["No tool discovered"])
             return None
 
         # 2. Enrichissement + Génération (local ou Azure selon l'environnement)
-        task = progress.add_task("Enrichissement et génération...", total=None)
+        task = progress.add_task("Enrichment and generation...", total=None)
         try:
             generated = run_pipeline(result, config)
         except Exception as _exc:
@@ -48,12 +46,12 @@ def run_auto(config: ForgeConfig) -> GeneratedServer | None:
             progress.stop()
             from mcp_forge.pipeline.remote import RemoteError
             if isinstance(_exc, RemoteError):
-                console.print(f"[red][FAIL] {_exc}[/red]")
+                console.print(f"[red][FAIL] {escape(str(_exc))}[/red]")
             else:
-                console.print(f"[red][FAIL] Erreur inattendue : {_exc}[/red]")
+                console.print(f"[red][FAIL] Unexpected error: {_exc}[/red]")
             _print_json(None, errors=[str(_exc)])
             return None
-        progress.update(task, description=f"[green][OK] Serveur généré ({generated.tools_count} tools)[/green]")
+        progress.update(task, description=f"[green][OK] Server generated ({generated.tools_count} tools)[/green]")
         progress.stop_task(task)
 
         # 3. Validation
@@ -81,7 +79,7 @@ def _write_eval_report(generated) -> None:
         json.dumps(generated.eval_report, ensure_ascii=False, indent=2),
         encoding="utf-8",
     )
-    console.print(f"[dim]Rapport d'évaluation : {report_path}[/dim]")
+    console.print(f"[dim]Evaluation report: {report_path}[/dim]")
 
 
 def _print_json(generated: GeneratedServer | None, errors: list[str] | None = None) -> None:
@@ -98,7 +96,8 @@ def _print_json(generated: GeneratedServer | None, errors: list[str] | None = No
             "files": list(generated.files.keys()),
             "errors": generated.errors,
         }
-    print(json.dumps(payload, ensure_ascii=False), file=sys.stdout)
+    from mcp_forge.ui.json_stdout import emit_result
+    emit_result(payload)
 
 
 def _print_hints(generated: GeneratedServer) -> None:
@@ -106,12 +105,12 @@ def _print_hints(generated: GeneratedServer) -> None:
     from mcp_forge.models import SourceType
 
     if not generated.success:
-        console.print(f"[red][FAIL] Génération échouée :[/red] {', '.join(generated.errors)}")
+        console.print(f"[red][FAIL] Generation failed:[/red] {', '.join(generated.errors)}")
         return
 
     out = str(generated.output_dir).replace("\\", "/")
-    console.print(f"\n[bold]Pour lancer :[/bold]  cd {out} && python server.py")
-    console.print(f"[bold]Pour tester :[/bold]  mcp-forge test {out}/server.py")
+    console.print(f"\n[bold]To run:[/bold]  cd {out} && python server.py")
+    console.print(f"[bold]To test:[/bold]  mcp-forge test {out}/server.py")
 
     source_type_str = ""
     server = generated.files.get("server.py", "")
@@ -125,10 +124,10 @@ def _print_hints(generated: GeneratedServer) -> None:
         source_type_str = SourceType.GRAPHQL.value
 
     hints = {
-        "cpp": "[dim]  ℹ Compilez votre bibliothèque partagée (.dll/.so) et définissez CPP_LIB_PATH.[/dim]",
-        SourceType.CLI_APP.value: "[dim]  ℹ Vérifiez que les commandes CLI sont dans le PATH.[/dim]",
-        SourceType.CODEBASE.value: "[dim]  ℹ Installez les dépendances du codebase source.[/dim]",
-        SourceType.WEBSITE.value: "[dim]  ℹ Consultez robots.txt du site cible avant de déployer.[/dim]",
+        "cpp": "[dim]  ℹ Build your shared library (.dll/.so) and set CPP_LIB_PATH.[/dim]",
+        SourceType.CLI_APP.value: "[dim]  ℹ Check that the CLI commands are on the PATH.[/dim]",
+        SourceType.CODEBASE.value: "[dim]  ℹ Install the dependencies of the source codebase.[/dim]",
+        SourceType.WEBSITE.value: "[dim]  ℹ Read the target site's robots.txt before deploying.[/dim]",
     }
     hint = hints.get(source_type_str)
     if hint:

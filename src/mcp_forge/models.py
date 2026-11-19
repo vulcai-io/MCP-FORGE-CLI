@@ -4,7 +4,7 @@ Modèles de données partagés entre tous les modules de mcp-forge.
 from __future__ import annotations
 
 from enum import Enum
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
@@ -66,6 +66,7 @@ class ToolParameter(BaseModel):
     enum_values: list[str] = Field(default_factory=list)
     items_type: ParameterType | None = None  # pour les arrays
     param_in: str = ""  # "query" | "header" | "path" | "body" — vide si inconnu
+    format: str = ""  # format de la spec (date-time, int64, uuid…) — vide si absent
 
 
 class DiscoveredTool(BaseModel):
@@ -74,12 +75,18 @@ class DiscoveredTool(BaseModel):
     stable_name: str = ""  # nom figé depuis la discovery (operationId, nom de fonction...) — jamais modifié par le LLM
     description: str
     parameters: list[ToolParameter] = Field(default_factory=list)
+    # Paramètres facultatifs regroupés dans le paramètre objet `options`
+    # (tool de plus de 50 paramètres, voir mcp_forge/discovery/limits.py)
+    option_parameters: list[ToolParameter] = Field(default_factory=list)
     # Métadonnées pour la génération de code
     http_method: str | None = None       # GET, POST, etc.
     endpoint: str | None = None          # /api/users/{id}
     base_url: str | None = None
     headers: dict[str, str] = Field(default_factory=dict)
     response_description: str = ""
+    # Schéma descriptif de la réponse (lot D, D5) : outputSchema du tool,
+    # voir mcp_forge/discovery/response_schema.py
+    response_schema: dict[str, Any] | None = None
     tags: list[str] = Field(default_factory=list)
     # Métadonnées libres (CLI cmd, codebase function/file/class...)
     metadata: dict[str, Any] = Field(default_factory=dict)
@@ -111,6 +118,11 @@ class ForgeConfig(BaseModel):
     server_name: str = ""
     server_description: str = ""
     use_llm_enrichment: bool = True
+    # --no-llm explicite (CLI ou mcp-forge.yaml) : aucun appel LLM, ni
+    # enrichissement ni évaluation, en local comme par l'API (2026-11-01).
+    # Distinct de use_llm_enrichment, qui passe aussi à False faute de clé
+    # locale (cas normal du mode distant).
+    no_llm: bool = False
     anthropic_api_key: str | None = None
     groq_api_key: str | None = None
     # Provider OpenAI-compatible (Ollama, LM Studio, vLLM...) — prioritaire sur Anthropic/Groq
@@ -123,6 +135,21 @@ class ForgeConfig(BaseModel):
     lang: str = "en"                     # langue des commentaires générés (en | fr)
     bundle_source: bool = False          # copier la codebase source dans output_dir/source/ (opt-in, --bundle-source)
     wait_for_eval: bool = True           # pipeline distant : attendre l'évaluation asynchrone (--no-wait)
+    # Instructions personnalisées pour le LLM (lot D, D4) : tout le serveur
+    # (FastMCP instructions) et par tool (clé : nom MCP), voir mcp_forge/instructions.py
+    server_instructions: str | None = None
+    tool_instructions: dict[str, str] = Field(default_factory=dict)
+    # Filtre des opérations OpenAPI (tags, préfixes de chemin), voir
+    # mcp_forge/discovery/limits.py
+    include_tags: list[str] = Field(default_factory=list)
+    exclude_tags: list[str] = Field(default_factory=list)
+    include_paths: list[str] = Field(default_factory=list)
+    exclude_paths: list[str] = Field(default_factory=list)
+    # Aucun outputSchema dans les tools générés (liste des tools plus courte)
+    no_output_schema: bool = False
+    # Qui génère : "cli" (local) ou "api" (api/services/generate.py), écrit
+    # dans le fichier VERSION avec la vraie version (mcp_forge/build_info.py)
+    generated_by: Literal["cli", "api"] = "cli"
 
 
 class GeneratedServer(BaseModel):

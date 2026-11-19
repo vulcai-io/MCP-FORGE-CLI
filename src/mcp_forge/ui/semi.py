@@ -10,7 +10,13 @@ from rich.console import Console
 from rich.progress import BarColumn, MofNCompleteColumn, Progress, SpinnerColumn, TextColumn
 from rich.table import Table
 
-from mcp_forge.models import DiscoveredTool, DiscoveryResult, ForgeConfig, GeneratedServer, SourceType
+from mcp_forge.models import (
+    DiscoveredTool,
+    DiscoveryResult,
+    ForgeConfig,
+    GeneratedServer,
+    SourceType,
+)
 
 console = Console()
 
@@ -27,14 +33,14 @@ def run_semi(config: ForgeConfig) -> GeneratedServer | None:
     result = discover(config)
 
     if not result.tools:
-        console.print("[yellow]⚠ Aucun tool découvert.[/yellow]")
+        console.print("[yellow]⚠ No tool discovered.[/yellow]")
         return None
 
     # 2. Review des tools — tableau adapté à la source
     result = _review_tools(result)
     enabled = [t for t in result.tools if t.enabled]
     if not enabled:
-        console.print("[yellow]⚠ Aucun tool sélectionné.[/yellow]")
+        console.print("[yellow]⚠ No tool selected.[/yellow]")
         return None
 
     # 3. Enrichissement + Génération (local ou Azure selon l'environnement)
@@ -70,7 +76,7 @@ def _write_eval_report(generated) -> None:
 
 def _review_tools(result: DiscoveryResult) -> DiscoveryResult:
     console.print()
-    console.rule("[bold blue]Review des tools découverts[/bold blue]")
+    console.rule("[bold blue]Review of the discovered tools[/bold blue]")
 
     n = len(result.tools)
     large = n > _TABLE_MAX_ROWS
@@ -82,16 +88,16 @@ def _review_tools(result: DiscoveryResult) -> DiscoveryResult:
         console.print(table)
 
     console.print()
-    console.print(f"[dim]{n} tool(s) trouvé(s). Laissez vide pour tout garder.[/dim]")
+    console.print(f"[dim]{n} tool(s) found. Leave empty to keep them all.[/dim]")
 
     if large:
         console.print(
-            "[dim]Conseil : excluez par numéro ou par préfixe de fichier "
-            "(ex: [bold]file:script/goat[/bold] pour exclure tout un dossier).[/dim]"
+            "[dim]Tip: exclude by number or by file prefix "
+            "(e.g. [bold]file:script/goat[/bold] to exclude a whole folder).[/dim]"
         )
 
     raw = typer.prompt(
-        "Numéros à EXCLURE (ex: 2,5,8), préfixe fichier (file:dossier/) ou Entrée pour tout garder",
+        "Numbers to EXCLUDE (e.g. 2,5,8), file prefix (file:folder/), or Enter to keep them all",
         default="",
     )
 
@@ -99,7 +105,7 @@ def _review_tools(result: DiscoveryResult) -> DiscoveryResult:
         _apply_exclusions(result.tools, raw)
 
     enabled_count = sum(1 for t in result.tools if t.enabled)
-    console.print(f"[green]{enabled_count} tool(s) conservé(s)[/green]")
+    console.print(f"[green]{enabled_count} tool(s) kept[/green]")
     return result
 
 
@@ -123,15 +129,16 @@ def _apply_exclusions(tools: list[DiscoveredTool], raw: str) -> None:
             disabled += 1
 
     if disabled:
-        console.print(f"[dim]  {disabled} tool(s) désactivé(s)[/dim]")
+        console.print(f"[dim]  {disabled} tool(s) turned off[/dim]")
 
 
 def _print_summary_review(result: DiscoveryResult) -> None:
     """Affiche un résumé par fichier/dossier au lieu d'un tableau ligne par ligne."""
     from collections import Counter
+
     from rich.table import Table as RichTable
 
-    console.print(f"[yellow]⚠ {len(result.tools)} tools — affichage résumé par fichier.[/yellow]")
+    console.print(f"[yellow]⚠ {len(result.tools)} tools: summary by file.[/yellow]")
 
     # Compte les tools par fichier (ou dossier de niveau 1)
     file_counts: Counter[str] = Counter()
@@ -144,24 +151,24 @@ def _print_summary_review(result: DiscoveryResult) -> None:
 
     # Tableau résumé : top 30 fichiers/dossiers
     table = RichTable(show_header=True, header_style="bold", expand=False)
-    table.add_column("Fichier / Dossier", style="cyan")
-    table.add_column("Nb tools", justify="right")
+    table.add_column("File / Folder", style="cyan")
+    table.add_column("Tools", justify="right")
 
-    console.print("[dim]  Construction du résumé...[/dim]")
+    console.print("[dim]  Building the summary...[/dim]")
     for path, count in file_counts.most_common(30):
         table.add_row(path, str(count))
     if len(file_counts) > 30:
-        table.add_row(f"[dim]... et {len(file_counts) - 30} autre(s)[/dim]", "")
+        table.add_row(f"[dim]... and {len(file_counts) - 30} more[/dim]", "")
 
     console.print(table)
 
     # Aperçu : 10 premiers tools
     console.print()
-    console.print("[dim]Aperçu des 10 premiers tools :[/dim]")
+    console.print("[dim]Preview of the first 10 tools:[/dim]")
     preview = RichTable(show_header=True, header_style="bold dim", expand=False)
     preview.add_column("#", style="dim", width=6)
-    preview.add_column("Nom", style="cyan")
-    preview.add_column("Fichier")
+    preview.add_column("Name", style="cyan")
+    preview.add_column("File")
     for i, tool in enumerate(result.tools[:10], 1):
         f = (tool.metadata or {}).get("file", "–")
         preview.add_row(str(i), tool.name, f)
@@ -172,7 +179,7 @@ def _build_review_table(result: DiscoveryResult) -> Table:
     """Construit un tableau de review adapté au type de source (≤ _TABLE_MAX_ROWS)."""
     table = Table(show_header=True, header_style="bold", expand=False)
     table.add_column("#", style="dim", width=4)
-    table.add_column("Nom", style="cyan", no_wrap=True)
+    table.add_column("Name", style="cyan", no_wrap=True)
 
     builders = {
         SourceType.OPENAPI:   _fill_api_table,
@@ -189,7 +196,7 @@ def _build_review_table(result: DiscoveryResult) -> Table:
         BarColumn(), MofNCompleteColumn(),
         console=console,
     ) as progress:
-        task = progress.add_task("  Préparation du tableau", total=len(result.tools))
+        task = progress.add_task("  Preparing the table", total=len(result.tools))
         builder(table, result, progress, task)
 
     return table
@@ -211,7 +218,7 @@ def _fill_api_table(table: Table, result: DiscoveryResult, progress: Progress, t
 
 
 def _fill_cli_table(table: Table, result: DiscoveryResult, progress: Progress, task: object) -> None:
-    table.add_column("Commande")
+    table.add_column("Command")
     table.add_column("Options", width=12)
     table.add_column("Description")
     for i, tool in enumerate(result.tools, 1):
@@ -226,8 +233,8 @@ def _fill_cli_table(table: Table, result: DiscoveryResult, progress: Progress, t
 
 
 def _fill_codebase_table(table: Table, result: DiscoveryResult, progress: Progress, task: object) -> None:
-    table.add_column("Fichier")
-    table.add_column("Classe / Fonction")
+    table.add_column("File")
+    table.add_column("Class / Function")
     table.add_column("Description")
     for i, tool in enumerate(result.tools, 1):
         meta = tool.metadata or {}
@@ -269,17 +276,17 @@ def _format_method_cell(tool: DiscoveredTool, source_type: SourceType) -> str:
 
 def _review_generated(generated: GeneratedServer, source_type: SourceType) -> None:
     console.print()
-    console.rule("[bold blue]Review du code généré[/bold blue]")
+    console.rule("[bold blue]Review of the generated code[/bold blue]")
 
     server_code = generated.files.get("server.py", "")
     console.print(f"[dim]server.py ({len(server_code.splitlines())} lignes) — {source_type.value}[/dim]")
 
     # Aperçu des premiers tools dans le fichier généré
     tool_count = server_code.count("@mcp.tool()")
-    console.print(f"[dim]{tool_count} outil(s) MCP dans le fichier[/dim]")
+    console.print(f"[dim]{tool_count} MCP tool(s) in the file[/dim]")
     console.print()
 
-    show = typer.confirm("Afficher server.py dans le terminal ?", default=False)
+    show = typer.confirm("Show server.py in the terminal?", default=False)
     if show:
         from rich.syntax import Syntax
         console.print(Syntax(server_code, "python", theme="monokai", line_numbers=True))
@@ -287,14 +294,14 @@ def _review_generated(generated: GeneratedServer, source_type: SourceType) -> No
     # Pour CLI et Codebase : avertissement spécifique
     if source_type == SourceType.CLI_APP:
         console.print(
-            "[yellow]  ℹ Le serveur lance des sous-processus — "
-            "vérifiez que les commandes sont disponibles dans le PATH.[/yellow]"
+            "[yellow]  ℹ The server starts subprocesses: "
+            "check that the commands are on the PATH.[/yellow]"
         )
     elif source_type == SourceType.CODEBASE:
         console.print(
-            "[yellow]  ℹ Le serveur importe le code source directement — "
-            "assurez-vous que les dépendances du codebase sont installées.[/yellow]"
+            "[yellow]  ℹ The server imports the source code directly: "
+            "make sure the codebase dependencies are installed.[/yellow]"
         )
 
-    console.print(f"\n[bold]Fichiers générés dans :[/bold] {generated.output_dir}")
-    typer.confirm("Continuer avec la validation ?", default=True, abort=True)
+    console.print(f"\n[bold]Files generated in:[/bold] {generated.output_dir}")
+    typer.confirm("Continue with the validation?", default=True, abort=True)

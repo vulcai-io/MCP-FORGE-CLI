@@ -101,7 +101,7 @@ class CobolParser:
                     seen.add(slug)
                     tools.append(DiscoveredTool(
                         name=slug,
-                        description=f"CALL '{called}' — programme externe appelé",
+                        description=f"CALL '{called}': external program called",
                         parameters=_parse_using_clause(normalized, m.end()),
                         tags=["codebase", relative_path, "external-call"],
                         metadata={
@@ -364,7 +364,7 @@ def _extract_subprograms(
 
         tools.append(DiscoveredTool(
             name=slug,
-            description=f"COBOL subprogram (moderne, isolé) : {name.upper()}",
+            description=f"COBOL subprogram (modern, isolated): {name.upper()}",
             parameters=params,
             tags=["codebase", relative_path, "subprogram"],
             metadata={

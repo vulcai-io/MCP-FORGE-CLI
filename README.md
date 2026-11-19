@@ -21,7 +21,7 @@ mcp-forge run https://petstore3.swagger.io/api/v3/openapi.json
 
 The generated server is written to `../mcp-forge-output/<server_name>/` by default.
 
-**Requirements:** Python 3.11+, [Node.js 18+](https://nodejs.org) and [uv](https://docs.astral.sh/uv/) (used to run generated servers).
+**Requirements:** Python 3.11.5+, [Node.js 18+](https://nodejs.org) and [uv](https://docs.astral.sh/uv/) (used to run generated servers).
 
 ## Supported sources
 
@@ -31,7 +31,8 @@ The generated server is written to `../mcp-forge-output/<server_name>/` by defau
 | GraphQL | URL contains `graphql` | `mcp-forge run https://api.example.com/graphql` |
 | Codebase | Local directory | `mcp-forge run ./my-project` |
 | CLI application | Command name | `mcp-forge run git` |
-| Website | `http(s)` URL without a spec extension | `mcp-forge run https://docs.example.com` |
+| API documentation page | Swagger UI or Redoc page: the tools of the spec it shows | `mcp-forge run https://petstore3.swagger.io` |
+| Website | `http(s)` URL without a spec extension: forms, links and script calls of that page (up to 30 tools) | `mcp-forge run https://docs.example.com` |
 
 **23 languages for codebase analysis**, including legacy ones: Python, JavaScript, TypeScript, Go, Rust, Java, C/C++, C#, PHP, Ruby, Kotlin, Swift, Scala, Dart, Elixir, R, **Fortran**, Bash, PowerShell, Groovy, Julia, Lua and **COBOL**.
 
@@ -96,6 +97,7 @@ Source analysis runs locally. To enrich and generate the server, the CLI sends t
 ## Limitations
 
 - Generated servers usually need some adjustments for your own configuration. The evaluator report tells you where to look.
+- Website discovery reads one page, the URL given, and does not follow links further. When the site has an OpenAPI spec or a GraphQL schema, generate from that instead, for one tool per operation.
 - JavaScript-heavy sites and single-page apps need the web extra: `pip install "vulcai-mcp-forge-cli[web]"` then `playwright install chromium`.
 - GraphQL generation needs introspection to be enabled on the endpoint.
 - If a generation returns 0 tools, see the [troubleshooting guide](https://mcp-forge.vulcai.io/docs/troubleshooting/no-tools).
@@ -115,6 +117,7 @@ Agents such as Claude or Cursor can also generate servers directly, by passing o
 - [Homepage](https://mcp-forge.vulcai.io)
 - [Changelog](CHANGELOG.md)
 - [Trust & Security](https://mcp-forge.vulcai.io/trust)
+- [OWASP MCP Top 10 and mcp-forge](OWASP_MCP_TOP10.md)
 - [Troubleshooting](https://mcp-forge.vulcai.io/docs/troubleshooting/no-tools)
 - [MCP server repository](https://github.com/vulcai-io/MCP-FORGE-MCP-SERVEUR)
 

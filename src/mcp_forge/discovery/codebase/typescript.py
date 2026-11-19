@@ -13,6 +13,7 @@ Priorise les fichiers .d.ts (déclarations publiques) si présents.
 """
 from __future__ import annotations
 
+import keyword as _kw
 import re
 from pathlib import Path
 
@@ -58,7 +59,7 @@ _SKIP_NAMES = {
 _SKIP_PREFIXES = ("_", "on", "handle")
 
 # Mots réservés Python + JS builtins
-import keyword as _kw
+
 _RESERVED = set(_kw.kwlist + _kw.softkwlist) | {
     # JS builtins problématiques dans les schemas MCP
     "constructor", "prototype", "__proto__",

@@ -1,12 +1,13 @@
 """
 Modules de découverte des capacités d'une source.
 """
-from .openapi import OpenAPIDiscovery
-from .web import WebDiscovery
-from .graphql import GraphQLDiscovery
+from mcp_forge.models import DiscoveryResult, ForgeConfig, SourceType
+
 from .cli_app import CLIAppDiscovery
 from .codebase import CodebaseDiscovery
-from mcp_forge.models import DiscoveryResult, ForgeConfig, SourceType
+from .graphql import GraphQLDiscovery
+from .openapi import OpenAPIDiscovery
+from .web import WebDiscovery
 
 
 def discover(config: ForgeConfig) -> DiscoveryResult:
@@ -20,7 +21,7 @@ def discover(config: ForgeConfig) -> DiscoveryResult:
     }
     cls = discoverers.get(config.source_type)
     if cls is None:
-        raise ValueError(f"Type de source non supporté : {config.source_type}")
+        raise ValueError(f"Unsupported source type: {config.source_type}")
     return cls(config).discover()
 
 

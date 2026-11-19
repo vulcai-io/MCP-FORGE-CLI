@@ -11,6 +11,7 @@ Priorité aux headers (.h/.hpp) qui définissent l'API publique.
 """
 from __future__ import annotations
 
+import keyword as _kw
 import re
 from pathlib import Path
 
@@ -40,7 +41,14 @@ _FUNC_DECL_RE = re.compile(
     r'(?:static|virtual|inline|explicit|constexpr|extern|__declspec\(\w+\)|__attribute__\(\([^)]*\)\)|\[\[nodiscard\]\])\s+'
     r')*'
     r'((?:(?:const|unsigned|signed|long|short|struct|enum|class)\s+)*'
-    r'[\w:<>*& ,]+?)\s+'          # type de retour
+    # Type de retour (lot C, recommandation 3) : même langage que l'ancienne classe
+    # [\w:<>*& ,]+? suivie de \s+ (un espace seul, comme l'indentation devant un
+    # constructeur, ou des mots sans espace séparés par des espaces), sans retour en arrière sur
+    # les espaces (quantificateurs possessifs, Python >= 3.11) : les commentaires neutralisés
+    # en espaces de même longueur faisaient essayer toutes les répartitions d'une longue
+    # suite d'espaces entre le type et \s+ (745 s contre quelques secondes sur le corpus
+    # C/C++ du banc ; mêmes correspondances sur ses 706 fichiers)
+    r'(?: (?=\s)| *+(?:[\w:<>*&,]++ ++)*?[\w:<>*&,]++))\s++'
     r'(~?[A-Za-z_]\w*(?:::[A-Za-z_]\w*)*)'  # nom de fonction (optionnel ClassName::)
     r'\s*\(([^)]*)\)'             # paramètres
     r'(?:\s*const)?(?:\s*noexcept(?:\([^)]*\))?)?'
@@ -64,7 +72,6 @@ _NON_RETURN_TYPES = {"class", "struct", "enum", "namespace", "typedef", "templat
 HEADER_EXTENSIONS = {".h", ".hpp", ".hxx", ".hh"}
 SOURCE_EXTENSIONS = {".cpp", ".cc", ".cxx", ".c"}
 
-import keyword as _kw
 _PY_KEYWORDS = set(_kw.kwlist + _kw.softkwlist) | {
     # JS builtins problématiques dans les schemas MCP
     "constructor", "prototype", "__proto__",
@@ -86,7 +93,7 @@ class CppParser:
         from collections import Counter
         self.exclusions: Counter = Counter()
 
-    """Extrait les fonctions publiques de fichiers C/C++ via regex."""
+    # Extrait les fonctions publiques de fichiers C/C++ via regex.
 
     def extract(self, path: Path, root: Path) -> list[DiscoveredTool]:
         try:

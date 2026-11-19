@@ -11,6 +11,7 @@ Seules les méthodes public / protected sont extraites (API publique).
 """
 from __future__ import annotations
 
+import keyword as _kw
 import re
 from collections import Counter
 from pathlib import Path
@@ -52,7 +53,6 @@ _SKIP_NAMES = {
     "toString", "hashCode", "equals", "clone", "finalize",
 }
 
-import keyword as _kw
 _PY_KEYWORDS = set(_kw.kwlist + _kw.softkwlist) | {
     # JS builtins problématiques dans les schemas MCP
     "constructor", "prototype", "__proto__",
@@ -205,7 +205,7 @@ class JavaParser:
             # Doc lisible des paramètres (`@param` du Javadoc), le type Java
             # restant visible — sans Javadoc, le type seul comme avant.
             docs_by_slug = {name.lower(): doc for name, doc in param_docs.items()}
-            for p, jtype in zip(params, java_param_types):
+            for p, jtype in zip(params, java_param_types, strict=False):
                 doc = docs_by_slug.get(p.name.rstrip("_"))
                 # Paramètre de type générique ("T") : rien ne permet de le
                 # construire autrement — la valeur est transmise telle

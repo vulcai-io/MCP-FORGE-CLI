@@ -127,7 +127,7 @@ def _extract_roxygen(source: str, pos: int) -> dict:
 
     block = m.group(0)
     # Retire le préfixe #'
-    lines = [re.sub(r"^\s*#'\s?", "", l) for l in block.splitlines()]
+    lines = [re.sub(r"^\s*#'\s?", "", line) for line in block.splitlines()]
 
     result: dict = {"params": {}}
     title_lines = []

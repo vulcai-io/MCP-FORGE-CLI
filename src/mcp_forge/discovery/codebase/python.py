@@ -26,6 +26,19 @@ _ANNOTATION_MAP: dict[str, ParameterType] = {
 
 _SLUG_RE = re.compile(r"[^a-z0-9]+")
 
+# Accesseurs (lot C, recommandation 11) : un attribut calculé n'est pas une fonction à appeler
+_PROPERTY_DECORATORS = {"property", "cached_property", "setter", "getter", "deleter"}
+
+
+def _is_accessor(node: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
+    """@property, @functools.cached_property, @x.setter, @x.getter, @x.deleter."""
+    for dec in node.decorator_list:
+        target = dec.func if isinstance(dec, ast.Call) else dec
+        name = target.attr if isinstance(target, ast.Attribute) else getattr(target, "id", "")
+        if name in _PROPERTY_DECORATORS:
+            return True
+    return False
+
 
 class PythonParser:
     """Extrait les fonctions publiques de fichiers Python via AST."""
@@ -50,7 +63,7 @@ class PythonParser:
                 if not node.name.startswith("_"):
                     for item in ast.iter_child_nodes(node):
                         if isinstance(item, ast.FunctionDef | ast.AsyncFunctionDef):
-                            if not item.name.startswith("_"):
+                            if not item.name.startswith("_") and not _is_accessor(item):
                                 tool = self._func_to_tool(item, relative_path, prefix=node.name)
                                 if tool:
                                     tools.append(tool)
@@ -70,6 +83,9 @@ class PythonParser:
         description = _first_line(docstring) or f"{prefix + '.' if prefix else ''}{func_name}"
         parameters = self._extract_parameters(node, docstring)
         response_description = self._describe_return(node)
+        # Paramètres positionnels seuls (`def f(a, /, b)`) : le serveur généré les passe par
+        # position, un appel `f(a=…)` lèverait TypeError (lot C, recommandation 11)
+        posonly = [a.arg for a in node.args.posonlyargs if a.arg not in ("self", "cls")]
 
         return DiscoveredTool(
             name=name,
@@ -83,7 +99,7 @@ class PythonParser:
                 "class": prefix or None,
                 "is_async": isinstance(node, ast.AsyncFunctionDef),
                 "language": "python",
-            },
+            } | ({"posonly_count": len(posonly)} if posonly else {}),
         )
 
     def _describe_return(self, node: ast.FunctionDef | ast.AsyncFunctionDef) -> str:
@@ -101,7 +117,7 @@ class PythonParser:
             type_name = ann.value.id
         if not type_name or type_name == "None":
             return ""
-        return f"Résultat de type {type_name} (converti en chaîne)."
+        return f"Result of type {type_name} (converted to a string)."
 
     def _extract_parameters(
         self,
@@ -110,8 +126,9 @@ class PythonParser:
     ) -> list[ToolParameter]:
         params: list[ToolParameter] = []
         args = node.args
-        all_args = args.args + args.kwonlyargs
-        defaults_offset = len(args.args) - len(args.defaults)
+        positional = args.posonlyargs + args.args  # les valeurs par défaut portent sur les deux
+        all_args = positional + args.kwonlyargs
+        defaults_offset = len(positional) - len(args.defaults)
         kw_defaults = {
             args.kwonlyargs[i].arg: args.kw_defaults[i]
             for i in range(len(args.kwonlyargs))
@@ -130,7 +147,7 @@ class PythonParser:
 
             default = None
             required = True
-            if arg in args.args:
+            if arg in positional:
                 default_idx = i - defaults_offset
                 if 0 <= default_idx < len(args.defaults):
                     default = _ast_const(args.defaults[default_idx])
@@ -152,7 +169,7 @@ class PythonParser:
             params.append(ToolParameter(
                 name=args.vararg.arg,
                 type=ParameterType.ARRAY,
-                description=doc_params.get(args.vararg.arg, "Arguments supplémentaires"),
+                description=doc_params.get(args.vararg.arg, "Additional arguments"),
                 required=False,
             ))
 
@@ -162,9 +179,18 @@ class PythonParser:
         """Retourne (type, items_type). `items_type` n'est renseigné que
         pour `list[X]`/`List[X]` quand X est un type simple connu — permet
         au générateur de produire `list[float]` plutôt qu'un `list` nu."""
+        # `X | None` (PEP 604) et `Union[X, None]` : le type X (lot C, recommandation 11)
+        optional = _without_none(annotation)
+        if optional is not None:
+            return self._annotation_to_type(optional)
         if isinstance(annotation, ast.Name):
             return _ANNOTATION_MAP.get(annotation.id, ParameterType.STRING), None
         if isinstance(annotation, ast.Constant):
+            if isinstance(annotation.value, str):  # annotation en chaîne : "int | None"
+                try:
+                    return self._annotation_to_type(ast.parse(annotation.value, mode="eval").body)
+                except SyntaxError:
+                    pass
             return _ANNOTATION_MAP.get(str(annotation.value), ParameterType.STRING), None
         if isinstance(annotation, ast.Subscript) and isinstance(annotation.value, ast.Name):
             name = annotation.value.id
@@ -184,6 +210,32 @@ class PythonParser:
 # ------------------------------------------------------------------
 # Helpers
 # ------------------------------------------------------------------
+
+
+def _is_none(node: ast.expr) -> bool:
+    return isinstance(node, ast.Constant) and node.value is None or (isinstance(node, ast.Name) and node.id == "None")
+
+
+def _without_none(annotation: ast.expr) -> ast.expr | None:
+    """X pour `X | None`, `None | X`, `Optional[X]`, `Union[X, None]` ; None sinon (union de
+    plusieurs types réels, ou pas d'union)."""
+    members: list[ast.expr] = []
+    if isinstance(annotation, ast.BinOp) and isinstance(annotation.op, ast.BitOr):
+        stack = [annotation]
+        while stack:
+            node = stack.pop()
+            if isinstance(node, ast.BinOp) and isinstance(node.op, ast.BitOr):
+                stack += [node.right, node.left]
+            else:
+                members.append(node)
+    elif (isinstance(annotation, ast.Subscript) and isinstance(annotation.value, ast.Name)
+          and annotation.value.id in ("Optional", "Union")):
+        inner = annotation.slice
+        members = list(inner.elts) if isinstance(inner, ast.Tuple) else [inner]
+        if annotation.value.id == "Optional":
+            members.append(ast.Constant(value=None))
+    real = [m for m in members if not _is_none(m)]
+    return real[0] if len(real) == 1 and len(real) < len(members) else None
 
 def _first_line(text: str) -> str:
     for line in text.splitlines():

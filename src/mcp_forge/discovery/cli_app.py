@@ -106,17 +106,17 @@ class CLIAppDiscovery:
         self.cmd_parts = shlex.split(config.source)
 
     def discover(self) -> DiscoveryResult:
-        console.print("[bold]>> Analyse de l'application CLI...[/bold]")
+        console.print("[bold]>> Analyzing the CLI application...[/bold]")
 
         root_help = self._run_help(self.cmd_parts)
         if root_help is None:
-            raise ValueError(f"Impossible de lancer '{' '.join(self.cmd_parts)} --help'")
+            raise ValueError(f"Could not run '{' '.join(self.cmd_parts)} --help'")
 
         title, root_description = self._parse_header(root_help)
         title = title or self.cmd_parts[-1]
 
         subcommands = self._detect_subcommands(root_help)
-        console.print(f"[dim]  {len(subcommands)} sous-commande(s) détectée(s)[/dim]")
+        console.print(f"[dim]  {len(subcommands)} subcommand(s) detected[/dim]")
 
         tools: list[DiscoveredTool] = []
 
@@ -161,7 +161,7 @@ class CLIAppDiscovery:
                 param_flags=flags,
             ))
 
-        console.print(f"[green][OK] {len(tools)} outil(s) MCP extrait(s)[/green]")
+        console.print(f"[green][OK] {len(tools)} MCP tool(s) extracted[/green]")
 
         auth_schemes = self._detect_auth(root_help)
 

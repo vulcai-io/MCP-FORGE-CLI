@@ -175,17 +175,17 @@ def verify_bug(bug: dict, code: str, facts: dict) -> dict:
         bare = {n for n in _BACKTICKED.findall(window) if re.fullmatch(r"[A-Za-z_]\w*", n)}
         really_undefined = sorted(bare & set(undefined or []))
         if missing or really_undefined:
-            confirmed = f"confirmé : {', '.join(missing + really_undefined)} introuvable(s)"
+            confirmed = f"confirmed: {', '.join(missing + really_undefined)} not found"
         elif existing:
-            contradicted = f"contredit : {', '.join(sorted(existing))} existe(nt) dans la bibliothèque standard"
+            contradicted = f"contradicted: {', '.join(sorted(existing))} exist(s) in the standard library"
         elif undefined == [] and bare and all(_defined_in(code, n) for n in bare):
-            contradicted = f"contredit : {', '.join(sorted(bare))} défini(s) dans le fichier, aucun nom indéfini (pyflakes)"
+            contradicted = f"contradicted: {', '.join(sorted(bare))} defined in the file, no undefined name (pyflakes)"
 
     if not (contradicted or confirmed) and severity == "bloquant" and _IMPORT_TIME_CLAIM.search(text):
         if facts.get("compile", {}).get("ok") and imported is True and undefined == []:
-            contradicted = "contredit : le fichier compile, s'importe sans erreur et pyflakes ne signale aucun nom indéfini"
+            contradicted = "contradicted: the file compiles, imports without error and pyflakes reports no undefined name"
         elif imported is False and (facts.get("import") or {}).get("kind") == "code":
-            confirmed = f"confirmé : l'import échoue ({facts['import']['error']})"
+            confirmed = f"confirmed: the import fails ({facts['import']['error']})"
 
     if contradicted and severity in ("bloquant", "majeur", "mineur"):
         bug["severite_llm"] = severity
@@ -197,8 +197,8 @@ def verify_bug(bug: dict, code: str, facts: dict) -> dict:
         bug["cap_eligible"] = True
     else:
         supported = quote_found(bug.get("extrait_code", ""), code)
-        bug["verification"] = "extrait cité trouvé dans le fichier" if supported else \
-            "non confirmé : aucun extrait de code vérifiable"
+        bug["verification"] = "quoted excerpt found in the file" if supported else \
+            "not confirmed: no checkable code excerpt"
         bug["cap_eligible"] = supported
     return bug
 

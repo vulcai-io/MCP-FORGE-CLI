@@ -11,6 +11,7 @@ Seules les méthodes public sont extraites (API publique).
 """
 from __future__ import annotations
 
+import keyword as _kw
 import re
 from pathlib import Path
 
@@ -43,7 +44,7 @@ _SKIP_NAMES = {
 _SKIP_PREFIXES = ("get_", "set_", "add_", "remove_")
 
 # Mots réservés Python + JS builtins
-import keyword as _kw
+
 _RESERVED = set(_kw.kwlist + _kw.softkwlist) | {
     # JS builtins problématiques dans les schemas MCP
     "constructor", "prototype", "__proto__",

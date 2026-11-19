@@ -11,6 +11,7 @@ Seules les fonctions exportées (nom commençant par une majuscule) sont extrait
 """
 from __future__ import annotations
 
+import keyword as _kw
 import re
 from pathlib import Path
 
@@ -42,7 +43,7 @@ _SKIP_NAMES = {"Main", "Init", "TestMain"}
 _SKIP_PREFIXES = ("Test", "Benchmark", "Example", "Fuzz")
 
 # Mots réservés Python + JS builtins
-import keyword as _kw
+
 _RESERVED = set(_kw.kwlist + _kw.softkwlist) | {
     # JS builtins problématiques dans les schemas MCP
     "constructor", "prototype", "__proto__",

@@ -102,7 +102,7 @@ def resolve_groq_model(api_key: str) -> str:
             if m.get("active", True) and not any(x in m["id"].lower() for x in _EXCLUDED)
         ]
     except Exception as exc:
-        logger.warning("Groq: liste des modèles indisponible (%s) — modèle par défaut %s", exc, DEFAULT_MODEL)
+        logger.warning("Groq: model list unavailable (%s), default model %s", exc, DEFAULT_MODEL)
         return DEFAULT_MODEL
 
     ranked = sorted((m for m in models if _size(m)[0] > 0), key=_size, reverse=True)
@@ -110,14 +110,14 @@ def resolve_groq_model(api_key: str) -> str:
         verdict = _probe(api_key, candidate["id"])
         if verdict is None:
             # Erreur transitoire : on retient le mieux classé sans mémoriser le choix.
-            logger.warning("Groq: test de %s indéterminé — utilisé sans vérification", candidate["id"])
+            logger.warning("Groq: test of %s inconclusive, used without a check", candidate["id"])
             return candidate["id"]
         if verdict:
             _cache[api_key] = (candidate["id"], time.monotonic() + _CACHE_TTL)
-            logger.info("Groq: modèle sélectionné %s", candidate["id"])
+            logger.info("Groq: selected model %s", candidate["id"])
             return candidate["id"]
-        logger.info("Groq: %s écarté (réponse tronquée ou invalide avec nos contraintes)", candidate["id"])
+        logger.info("Groq: %s discarded (truncated or invalid answer with our constraints)", candidate["id"])
 
-    logger.warning("Groq: aucun modèle utilisable parmi %d candidats — essai de %s", len(ranked), DEFAULT_MODEL)
+    logger.warning("Groq: no usable model among %d candidates, trying %s", len(ranked), DEFAULT_MODEL)
     _cache[api_key] = (DEFAULT_MODEL, time.monotonic() + _CACHE_TTL)
     return DEFAULT_MODEL

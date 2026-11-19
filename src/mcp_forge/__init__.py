@@ -32,12 +32,12 @@ from mcp_forge.models import (
     SourceType,
     ToolParameter,
 )
-from mcp_forge.validation.smoke_test import SmokeTestResult, run_smoke_test
 from mcp_forge.validation.functional_test import (
     FunctionalTestResult,
     ToolCallResult,
     run_functional_test,
 )
+from mcp_forge.validation.smoke_test import SmokeTestResult, run_smoke_test
 
 try:
     from importlib.metadata import version as _v

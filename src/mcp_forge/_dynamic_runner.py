@@ -93,6 +93,7 @@ def main() -> None:
 
     # --- fausse API cible : toute requête httpx est capturée en mémoire ----
     import httpx
+
     # TestClient hérite de httpx.Client : importé AVANT le remplacement
     # ci-dessous, il garde son transport ASGI vers l'application testée.
     from starlette.testclient import TestClient
@@ -139,16 +140,16 @@ def main() -> None:
         wrong = rpc(client, "initialize", INIT, {"Authorization": "Bearer wrong-token"}).status_code
         if sane != 200:
             results.append(result("all_mcp_routes_authenticated", "non_verifiable",
-                                  f"test: initialize avec le bon token -> {sane} (serveur non opérationnel)"))
+                                  f"test: initialize with the right token -> {sane} (server not working)"))
         else:
             ok = no_token == 401 and wrong == 401
             results.append(result("all_mcp_routes_authenticated", "ok" if ok else "probleme",
-                                  f"test: POST /mcp sans token -> {no_token}, avec un mauvais token -> {wrong} (attendu 401)"))
+                                  f"test: POST /mcp without a token -> {no_token}, with a wrong token -> {wrong} (expected 401)"))
 
         # T2 — token lu uniquement dans l'en-tête
         query = rpc(client, "initialize", INIT, path=f"/mcp?token={token}").status_code
         results.append(result("token_header_only", "ok" if query == 401 else "probleme",
-                              f"test: POST /mcp?token=<bon token> sans en-tête -> {query} (attendu 401)"))
+                              f"test: POST /mcp?token=<right token> without a header -> {query} (expected 401)"))
 
         # T3 — page de login échappée
         reg = client.post("/oauth/register", json={"redirect_uris": [REDIRECT + "?p=" + PAYLOAD], "client_name": PAYLOAD})
@@ -158,24 +159,24 @@ def main() -> None:
             "code_challenge": CHALLENGE, "code_challenge_method": "S256"})
         if page.status_code != 200:
             results.append(result("login_page_escaped", "non_verifiable",
-                                  f"test: GET /oauth/authorize -> {page.status_code}, page non affichée ({page.text[:120]})"))
+                                  f"test: GET /oauth/authorize -> {page.status_code}, page not shown ({page.text[:120]})"))
         else:
             escaped = RAW_MARKER not in page.text
             results.append(result("login_page_escaped", "ok" if escaped else "probleme",
-                                  f"test: state, client_name et redirect_uri = {PAYLOAD!r} -> "
-                                  + ("sortie échappée" if escaped else "balise <script> renvoyée telle quelle")))
+                                  f"test: state, client_name and redirect_uri = {PAYLOAD!r} -> "
+                                  + ("output escaped" if escaped else "<script> tag returned as is")))
 
         # T4 — Origin validé
         evil = rpc(client, "initialize", INIT, {**auth, "Origin": "https://evil.example"}).status_code
         own = rpc(client, "initialize", INIT, {**auth, "Origin": server_url}).status_code
         results.append(result("origin_validated", "ok" if evil == 403 else "probleme",
-                              f"test: Origin https://evil.example -> {evil} (attendu 403), origine du serveur -> {own}"))
+                              f"test: Origin https://evil.example -> {evil} (expected 403), server origin -> {own}"))
 
         # T5 — pas de passthrough du token MCP vers l'API cible
         api_server = any(hasattr(module, n) for n in ("BASE_URL", "GRAPHQL_ENDPOINT"))
         if not api_server:
             results.append(result("no_token_passthrough", "non_applicable",
-                                  "serveur codebase/CLI : les tools n'appellent aucune API cible"))
+                                  "codebase/CLI server: the tools call no target API"))
         else:
             tools = rpc(client, "tools/list", headers=auth).json().get("result", {}).get("tools", [])
             tried = []
@@ -190,12 +191,12 @@ def main() -> None:
                     break
             if not received:
                 results.append(result("no_token_passthrough", "non_verifiable",
-                                      f"aucun des tools essayés ({', '.join(tried) or 'aucun'}) n'a atteint la fausse API cible"))
+                                      f"none of the tools tried ({', '.join(tried) or 'none'}) reached the fake target API"))
             else:
                 leaked = [r for r in received if any(token in v for v in r["headers"].values())]
-                proof = (f"test: tools/call {tried[-1]} -> {len(received)} requête(s) reçue(s) par la fausse API ; "
-                         + ("le token MCP figure dans les en-têtes transmis" if leaked
-                            else "le token MCP n'apparaît dans aucun en-tête transmis"))
+                proof = (f"test: tools/call {tried[-1]} -> {len(received)} request(s) received by the fake API; "
+                         + ("the MCP token is in the forwarded headers" if leaked
+                            else "the MCP token is in none of the forwarded headers"))
                 results.append(result("no_token_passthrough", "probleme" if leaked else "ok", proof))
 
         # T6 — audience et expiration du token vérifiées
@@ -209,39 +210,39 @@ def audience_and_expiry(client, rpc, token: str, resource: str) -> dict:
     try:
         import jwt
     except ImportError:
-        return result(point, "non_verifiable", "PyJWT indisponible")
+        return result(point, "non_verifiable", "PyJWT not installed")
     reg = client.post("/oauth/register", json={"redirect_uris": [REDIRECT], "client_name": "checks"})
     if reg.status_code != 201:
-        return result(point, "non_verifiable", f"enregistrement OAuth impossible ({reg.status_code})")
+        return result(point, "non_verifiable", f"OAuth client registration failed ({reg.status_code})")
     client_id = reg.json()["client_id"]
     code_resp = client.post("/oauth/authorize", data={
         "client_id": client_id, "redirect_uri": REDIRECT, "code_challenge": CHALLENGE,
         "code_challenge_method": "S256", "state": "s", "access_token": token})
     if code_resp.status_code != 302 or "code=" not in code_resp.headers.get("location", ""):
-        return result(point, "non_verifiable", f"parcours OAuth impossible (authorize -> {code_resp.status_code})")
+        return result(point, "non_verifiable", f"OAuth flow failed (authorize -> {code_resp.status_code})")
     code = code_resp.headers["location"].split("code=")[1].split("&")[0]
     tok = client.post("/oauth/token", data={"grant_type": "authorization_code", "code": code,
                                             "redirect_uri": REDIRECT, "code_verifier": VERIFIER,
                                             "client_id": client_id})
     access = tok.json().get("access_token", "") if tok.status_code == 200 else ""
     if access.count(".") != 2:
-        return result(point, "non_verifiable", "le serveur n'émet pas de JWT : falsification impossible à tester")
+        return result(point, "non_verifiable", "the server issues no JWT: forgery cannot be tested")
     key = hmac.new(token.encode(), b"mcp-forge/jwt-signing/v1", hashlib.sha256).digest()
     try:
         claims = jwt.decode(access, key, algorithms=["HS256"], options={"verify_aud": False})
     except jwt.PyJWTError:
-        return result(point, "non_verifiable", "clé de signature non dérivable : falsification impossible à tester")
+        return result(point, "non_verifiable", "signing key cannot be derived: forgery cannot be tested")
     genuine = rpc(client, "initialize", INIT, {"Authorization": f"Bearer {access}"}).status_code
     other = jwt.encode({**claims, "aud": "https://other-server.example/mcp", "jti": secrets.token_hex(8)}, key, algorithm="HS256")
     expired = jwt.encode({**claims, "exp": int(time.time()) - 60, "jti": secrets.token_hex(8)}, key, algorithm="HS256")
     other_status = rpc(client, "initialize", INIT, {"Authorization": f"Bearer {other}"}).status_code
     expired_status = rpc(client, "initialize", INIT, {"Authorization": f"Bearer {expired}"}).status_code
     if genuine != 200:
-        return result(point, "non_verifiable", f"le JWT émis par le serveur lui-même est refusé ({genuine})")
+        return result(point, "non_verifiable", f"the JWT issued by the server itself is rejected ({genuine})")
     ok = other_status == 401 and expired_status == 401
     return result(point, "ok" if ok else "probleme",
-                  f"test: JWT valide -> {genuine} ; aud=autre serveur -> {other_status} ; expiré -> {expired_status} "
-                  f"(attendu 401 et 401)")
+                  f"test: valid JWT -> {genuine}; aud=other server -> {other_status}; expired -> {expired_status} "
+                  f"(expected 401 and 401)")
 
 
 if __name__ == "__main__":

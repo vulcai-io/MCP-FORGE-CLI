@@ -68,7 +68,9 @@ _STRING_HEURISTICS: list[tuple[tuple[str, ...], str]] = [
     (("id", "key", "uuid"),                   "1"),
     (("url", "uri", "link", "href"),           "https://example.com"),
     (("email", "mail"),                        "test@example.com"),
-    (("path", "file"),                         "/tmp/test"),
+    # Valeur d'exemple passée à un paramètre « path » pendant le test fonctionnel, jamais un
+    # fichier ouvert par mcp-forge
+    (("path", "file"),                         "/tmp/test"),  # nosec B108 - voir ci-dessus
     (("limit", "size", "count", "max"),        "10"),  # parfois string dans certaines APIs
     (("query", "q", "search", "keyword"),      "test"),
 ]
@@ -126,7 +128,7 @@ class FunctionalTestResult:
             lines.append(f"  {icon} {label}{suffix}")
 
         if self.tool_calls:
-            lines.append("\nPhase 2 -- Appel des tools :")
+            lines.append("\nPhase 2 -- Tool calls:")
             icons = {"ok": "[OK]  ", "warn": "[WARN]", "fail": "[FAIL]", "skip": "[SKIP]"}
             for tc in self.tool_calls:
                 icon = icons.get(tc.status, "[?]   ")

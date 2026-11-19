@@ -13,35 +13,36 @@ puis délègue l'extraction au parser approprié.
 """
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 from rich.console import Console
 from rich.progress import BarColumn, MofNCompleteColumn, Progress, SpinnerColumn, TextColumn
 
-from mcp_forge.models import DiscoveredTool, DiscoveryResult, ForgeConfig, SourceType
-from mcp_forge.discovery.codebase.python import PythonParser
-from mcp_forge.discovery.codebase.lua import LuaParser
-from mcp_forge.discovery.codebase.js import JSParser
-from mcp_forge.discovery.codebase.cpp import CppParser, HEADER_EXTENSIONS
-from mcp_forge.discovery.codebase.java import JavaParser
-from mcp_forge.discovery.codebase.go import GoParser
-from mcp_forge.discovery.codebase.csharp import CSharpParser
-from mcp_forge.discovery.codebase.typescript import TypeScriptParser
-from mcp_forge.discovery.codebase.rust import RustParser
-from mcp_forge.discovery.codebase.php import PhpParser
-from mcp_forge.discovery.codebase.ruby import RubyParser
-from mcp_forge.discovery.codebase.kotlin import KotlinParser
-from mcp_forge.discovery.codebase.swift import SwiftParser
+from mcp_forge.discovery.codebase.bash import BashParser
 from mcp_forge.discovery.codebase.cobol import CobolParser
-from mcp_forge.discovery.codebase.scala import ScalaParser
+from mcp_forge.discovery.codebase.cpp import HEADER_EXTENSIONS, CppParser
+from mcp_forge.discovery.codebase.csharp import CSharpParser
 from mcp_forge.discovery.codebase.dart import DartParser
 from mcp_forge.discovery.codebase.elixir import ElixirParser
-from mcp_forge.discovery.codebase.r_lang import RParser
 from mcp_forge.discovery.codebase.fortran import FortranParser
-from mcp_forge.discovery.codebase.bash import BashParser
-from mcp_forge.discovery.codebase.powershell import PowerShellParser
+from mcp_forge.discovery.codebase.go import GoParser
 from mcp_forge.discovery.codebase.groovy import GroovyParser
+from mcp_forge.discovery.codebase.java import JavaParser
+from mcp_forge.discovery.codebase.js import JSParser
 from mcp_forge.discovery.codebase.julia import JuliaParser
+from mcp_forge.discovery.codebase.kotlin import KotlinParser
+from mcp_forge.discovery.codebase.lua import LuaParser
+from mcp_forge.discovery.codebase.php import PhpParser
+from mcp_forge.discovery.codebase.powershell import PowerShellParser
+from mcp_forge.discovery.codebase.python import PythonParser
+from mcp_forge.discovery.codebase.r_lang import RParser
+from mcp_forge.discovery.codebase.ruby import RubyParser
+from mcp_forge.discovery.codebase.rust import RustParser
+from mcp_forge.discovery.codebase.scala import ScalaParser
+from mcp_forge.discovery.codebase.swift import SwiftParser
+from mcp_forge.discovery.codebase.typescript import TypeScriptParser
+from mcp_forge.models import DiscoveredTool, DiscoveryResult, ForgeConfig, SourceType
 
 console = Console()
 
@@ -57,7 +58,7 @@ _LANGUAGE_EXTENSIONS: dict[str, list[str]] = {
     "javascript": [".js", ".mjs"],
     "typescript": [".ts", ".tsx", ".d.ts"],
     # C++ : tous les fichiers détectés, mais le parser priorise les headers
-    "cpp":        [".h", ".hpp", ".hxx", ".cpp", ".cc", ".cxx", ".c"],
+    "cpp":        [".h", ".hpp", ".hxx", ".hh", ".cpp", ".cc", ".cxx", ".c"],
     "java":       [".java"],
     "go":         [".go"],
     "csharp":     [".cs"],
@@ -77,6 +78,37 @@ _LANGUAGE_EXTENSIONS: dict[str, list[str]] = {
     "groovy":     [".groovy", ".gradle"],
     "julia":      [".jl"],
 }
+
+# Extension (en minuscules) → langage. Les extensions sont comparées sans tenir compte de la
+# casse sur tous les systèmes (lot C, 2026-11-17) : sous Linux et macOS, `rglob("*.f90")`
+# ignorait `.F90`, `.CBL`, `.CPY`… que Windows trouvait.
+_EXT_TO_LANGUAGE: dict[str, str] = {}
+for _lang, _exts in _LANGUAGE_EXTENSIONS.items():
+    for _ext in _exts:
+        _EXT_TO_LANGUAGE.setdefault(_ext.lower(), _lang)
+
+
+def _suffix(name: str) -> str:
+    return os.path.splitext(name)[1].lower()
+
+
+def walk_codebase(root: Path) -> dict[str, list[Path]]:
+    """Fichiers de chaque langage sous `root`, en un seul parcours (lot C, recommandation 10 :
+    avant, un `rglob` par extension, une quarantaine de parcours, dossiers ignorés compris).
+
+    Dossiers de _IGNORE_DIRS élagués ; extensions sans tenir compte de la casse ; ordre
+    déterministe sur tous les systèmes (parties du chemin relatif, sensibles à la casse)."""
+    found: dict[str, list[Path]] = {}
+    for dirpath, dirnames, filenames in os.walk(root):
+        dirnames[:] = sorted(d for d in dirnames if d not in _IGNORE_DIRS)
+        for name in filenames:
+            language = _EXT_TO_LANGUAGE.get(_suffix(name))
+            if language:
+                found.setdefault(language, []).append(Path(dirpath) / name)
+    for files in found.values():
+        files.sort(key=lambda f: f.relative_to(root).parts)
+    return found
+
 
 _PARSERS = {
     "python":     PythonParser,
@@ -146,20 +178,28 @@ class CodebaseDiscovery:
     def __init__(self, config: ForgeConfig):
         self.config = config
         self.root = Path(config.source).resolve()
+        self._files: dict[str, list[Path]] | None = None
+
+    @property
+    def files_by_language(self) -> dict[str, list[Path]]:
+        """Résultat du parcours unique, gardé pour la détection et la collecte."""
+        if self._files is None:
+            self._files = walk_codebase(self.root)
+        return self._files
 
     def discover(self) -> DiscoveryResult:
         if not self.root.is_dir():
-            raise ValueError(f"Dossier introuvable : {self.root}")
+            raise ValueError(f"Folder not found: {self.root}")
 
         language = self._detect_language()
-        console.print(f"[bold]>> Analyse du codebase ({language})...[/bold]")
+        console.print(f"[bold]>> Analyzing the codebase ({language})...[/bold]")
 
         parser = _PARSERS[language]()
         extensions = _LANGUAGE_EXTENSIONS[language]
 
-        console.print("[dim]  Collecte des fichiers...[/dim]")
+        console.print("[dim]  Collecting the files...[/dim]")
         files = self._collect_files(extensions)
-        console.print(f"[dim]  {len(files)} fichier(s) {language} trouvé(s)[/dim]")
+        console.print(f"[dim]  {len(files)} {language} file(s) found[/dim]")
 
         tools: list[DiscoveredTool] = []
         with Progress(
@@ -171,7 +211,7 @@ class CodebaseDiscovery:
             console=console,
         ) as progress:
             task = progress.add_task(
-                "  Analyse des fichiers",
+                "  Analyzing the files",
                 total=len(files),
                 current_file="",
             )
@@ -200,16 +240,24 @@ class CodebaseDiscovery:
                 deduped.append(tool)
         tools = deduped
 
-        console.print(f"[green][OK] {len(tools)} outil(s) MCP extrait(s)[/green]")
+        console.print(f"[green][OK] {len(tools)} MCP tool(s) extracted[/green]")
+
+        # Tous les langages du dépôt (un seul est généré : le dominant)
+        languages = {lang: len(files) for lang, files in sorted(self.files_by_language.items())}
+        others = {lang: n for lang, n in languages.items() if lang != language}
+        if others:
+            console.print("[dim]  Other languages present (not generated): "
+                          + ", ".join(f"{lang} ({n})" for lang, n in others.items()) + "[/dim]")
 
         title = self.root.name
         return DiscoveryResult(
             source_type=SourceType.CODEBASE,
             source_path=str(self.root),
             title=title,
-            description=f"Fonctions publiques extraites de {title} ({language})",
+            description=f"Public functions extracted from {title} ({language})",
             tools=tools,
-            metadata={"language": language, "coverage": coverage_summary(len(tools), exclusions)},
+            metadata={"language": language, "languages": languages,
+                      "coverage": coverage_summary(len(tools), exclusions)},
         )
 
     def _detect_language(self) -> str:
@@ -218,64 +266,50 @@ class CodebaseDiscovery:
 
         Un fichier à la racine vaut 1.0, à 1 niveau de profondeur 0.5, à 2 niveaux 0.33, etc.
         Cela évite qu'un dossier de tests avec 1000 fichiers Python prenne le dessus sur
-        10 fichiers C++ au cœur du projet.
+        10 fichiers C++ au cœur du projet. Les dossiers ignorés (node_modules, .git, build…)
+        ne comptent plus (lot C).
         """
-        console.print("[dim]  Détection du langage...[/dim]")
+        console.print("[dim]  Detecting the language...[/dim]")
         scores: dict[str, float] = dict.fromkeys(_LANGUAGE_EXTENSIONS, 0.0)
-        root_depth = len(self.root.parts)
-
-        for lang, exts in _LANGUAGE_EXTENSIONS.items():
-            for ext in exts:
-                for f in self.root.rglob(f"*{ext}"):
-                    # Profondeur relative (0 = à la racine du projet)
-                    depth = len(f.parts) - root_depth - 1
-                    scores[lang] += 1.0 / (depth + 1)
+        for lang, files in self.files_by_language.items():
+            for f in files:
+                depth = len(f.relative_to(self.root).parts) - 1  # 0 = à la racine du projet
+                scores[lang] += 1.0 / (depth + 1)
 
         for lang, score in scores.items():
             if score:
-                console.print(f"[dim]    {lang}: {score:.1f} (score pondéré)[/dim]")
+                console.print(f"[dim]    {lang}: {score:.1f} (weighted score)[/dim]")
         dominant = max(scores, key=lambda k: scores[k])
         return dominant if scores[dominant] > 0 else "python"
 
-    def _collect_files(self, extensions: list[str]) -> list[Path]:
-        files = []
-        collected: set[Path] = set()
+    def _files_with(self, extensions: list[str]) -> list[Path]:
+        """Fichiers du parcours dont l'extension est dans `extensions` (sans tenir compte de la
+        casse), groupés dans l'ordre de `extensions` comme l'ancienne boucle de `rglob`."""
+        rank: dict[str, int] = {}
+        for i, ext in enumerate(extensions):
+            rank.setdefault(ext.lower(), i)
+        languages = {_EXT_TO_LANGUAGE[e] for e in rank if e in _EXT_TO_LANGUAGE}
+        files = [f for lang in languages for f in self.files_by_language.get(lang, [])
+                 if _suffix(f.name) in rank]
+        return sorted(files, key=lambda f: (rank[_suffix(f.name)], f.relative_to(self.root).parts))
 
+    def _collect_files(self, extensions: list[str]) -> list[Path]:
         # Pour C++ : si des headers existent, on ne prend que les headers
         # (évite le bruit des implémentations)
-        if any(ext in HEADER_EXTENSIONS for ext in extensions):
-            header_exts = [e for e in extensions if e in HEADER_EXTENSIONS]
-            source_exts = [e for e in extensions if e not in HEADER_EXTENSIONS]
-            header_files = self._glob_extensions(header_exts)
+        if any(ext.lower() in HEADER_EXTENSIONS for ext in extensions):
+            header_exts = [e for e in extensions if e.lower() in HEADER_EXTENSIONS]
+            source_exts = [e for e in extensions if e.lower() not in HEADER_EXTENSIONS]
+            header_files = self._files_with(header_exts)
             if header_files:
                 console.print(
-                    f"[dim]  >> {len(header_files)} header(s) trouvé(s), "
-                    f"sources ignorées (API publique)[/dim]"
+                    f"[dim]  >> {len(header_files)} header(s) found, "
+                    f"sources skipped (public API)[/dim]"
                 )
                 return header_files
             # Pas de headers : fallback sur les sources
             extensions = source_exts
 
-        for ext in extensions:
-            for f in sorted(self.root.rglob(f"*{ext}")):
-                if f in collected:
-                    continue
-                if any(part in _IGNORE_DIRS for part in f.parts):
-                    continue
-                if f.stem.startswith(_IGNORE_FILE_PREFIXES):
-                    continue
-                collected.add(f)
-                files.append(f)
-        return files
+        return [f for f in self._files_with(extensions) if not f.stem.startswith(_IGNORE_FILE_PREFIXES)]
 
     def _glob_extensions(self, extensions: list[str]) -> list[Path]:
-        files, collected = [], set()
-        for ext in extensions:
-            for f in sorted(self.root.rglob(f"*{ext}")):
-                if f in collected:
-                    continue
-                if any(part in _IGNORE_DIRS for part in f.parts):
-                    continue
-                collected.add(f)
-                files.append(f)
-        return files
+        return self._files_with(extensions)

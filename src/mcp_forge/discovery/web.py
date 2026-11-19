@@ -10,14 +10,17 @@ Stratégie (par ordre de précision) :
 """
 from __future__ import annotations
 
+import json
 import re
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from urllib.parse import urljoin, urlparse
+from urllib.parse import parse_qs, urljoin, urlparse
 
-import httpx
 from bs4 import BeautifulSoup
 from rich.console import Console
+from rich.markup import escape
 
+from mcp_forge.discovery import download
 from mcp_forge.models import (
     AuthScheme,
     AuthType,
@@ -79,6 +82,128 @@ _INPUT_TYPE_MAP: dict[str, ParameterType] = {
 }
 
 
+# À partir de combien de tools (ou moins) la découverte d'un site dit ce qu'elle sait faire
+# (demande du PO du 2026-11-18, avant Show HN : un visiteur essaiera un site)
+FEW_TOOLS = 3
+
+WEBSITE_SCOPE = (
+    "Website discovery reads one page, the URL you give: its HTML forms, its links to other "
+    "pages of the same site and the API calls spotted in its scripts. It also uses an OpenAPI "
+    "spec if the site publishes one at a usual path (/openapi.json, /swagger.json...), links to "
+    "one from that page, or if the page is a Swagger UI or Redoc page. It does not follow "
+    "links to further pages and does not log in."
+)
+API_ADVICE = (
+    "If the site has an API described by an OpenAPI spec or a GraphQL schema, generate the "
+    "server from that instead: it gives one tool per operation (mcp-forge run <spec URL>, or "
+    "mcp-forge run <GraphQL endpoint> --type graphql)."
+)
+
+
+def few_tools_hint(count: int, sep: str = " ") -> str | None:
+    """Message en anglais quand un site donne peu de tools (FEW_TOOLS ou moins), sinon None.
+    `sep` sépare le constat, la portée et le conseil (une ligne chacun dans le terminal)."""
+    if count > FEW_TOOLS:
+        return None
+    found = "No tool found on this page." if count == 0 else f"Only {count} tool(s) found on this page."
+    return sep.join((found, WEBSITE_SCOPE, API_ADVICE))
+
+
+_KIND_LABELS = (("origin", "start page"), ("form", "form(s)"), ("nav", "link(s) to pages of the site"),
+                ("js", "call(s) spotted in the scripts"))
+
+
+def _found_summary(endpoints: list[_RawEndpoint]) -> str:
+    """Ce que la page a donné, par sorte (« 2 form(s), 5 link(s) to pages of the site »)."""
+    counts = {kind: sum(1 for e in endpoints if e.source == kind) for kind, _ in _KIND_LABELS}
+    parts = [label if kind == "origin" else f"{counts[kind]} {label}"
+             for kind, label in _KIND_LABELS if counts[kind]]
+    return ", ".join(parts) or "no form and no link to another page of the site"
+
+
+# Plafond de tools d'un site (correction D, PO, 2026-11-18) : une page aux centaines de liens
+# ne doit pas donner des centaines de tools. Ordre gardé : page de départ, formulaires, appels
+# des scripts, groupes de liens, puis liens dans l'ordre de la page (navigation d'abord).
+WEBSITE_MAX_TOOLS = 30
+_KEEP_ORDER = {"origin": 0, "form": 1, "js": 2}
+
+
+def _cap(endpoints: list[_RawEndpoint]) -> list[_RawEndpoint]:
+    def rank(item: tuple[int, _RawEndpoint]) -> tuple[int, int]:
+        index, ep = item
+        if ep.source in _KEEP_ORDER:
+            return _KEEP_ORDER[ep.source], index
+        return (3 if ep.params else 4), index
+    kept = sorted(enumerate(endpoints), key=rank)[:WEBSITE_MAX_TOOLS]
+    return [ep for _, ep in sorted(kept, key=lambda item: item[0])]
+
+
+def _same_page(path: str, start_path: str) -> bool:
+    """Lien vers la page de départ elle-même (`/` et `/index.html` sont la même page)."""
+    def norm(p: str) -> str:
+        p = re.sub(r"/index\.(html?|php)$", "/", p, flags=re.IGNORECASE)
+        return p.rstrip("/") or "/"
+    return bool(start_path) and norm(path) == norm(start_path)
+
+
+def _slug_values(template: str, members: list[tuple[str, str]]) -> list[tuple[str, str]]:
+    """(valeur du segment {slug}, libellé) de chaque lien d'un groupe."""
+    position = [s for s in template.split("/") if s].index("{slug}")
+    return [([s for s in path.split("/") if s][position], label) for path, label in members]
+
+
+# --- Pages de documentation d'API (Swagger UI, Redoc) : retrouver la spec affichée -------------
+# Demande du PO du 2026-11-18 : une URL de page Swagger UI ou Redoc génère depuis la spec.
+_DOC_PAGE_RE = re.compile(r"swagger-ui|SwaggerUIBundle|<redoc\b|Redoc\.init|redoc\.standalone", re.IGNORECASE)
+# Scripts de configuration à lire (jamais le bundle de Swagger UI, lourd et sans URL de spec)
+_DOC_CONFIG_SCRIPT_RE = re.compile(r"(swagger-initializer|swagger-config|swagger-ui-init|initializer)[^/]*\.js$",
+                                   re.IGNORECASE)
+# URL données explicitement : clé `url` (dont `urls[].url`), attribut spec-url, Redoc.init, fetch
+_EXPLICIT_SPEC_RES = (
+    re.compile(r"""(?<![A-Za-z_])["']?url["']?\s*:\s*["']([^"'\s]+)["']"""),
+    re.compile(r"""spec-url\s*=\s*["']([^"'\s]+)["']""", re.IGNORECASE),
+    re.compile(r"""Redoc\.init\(\s*["']([^"'\s]+)["']"""),
+    re.compile(r"""fetch\(\s*["']([^"'\s]+)["']"""),
+)
+_CONFIG_URL_RE = re.compile(r"""(?<![A-Za-z_])["']?configUrl["']?\s*:\s*["']([^"'\s]+)["']""")
+# Toute autre chaîne qui ressemble à l'URL d'une spec (absolue, ou chemin commençant par /)
+_SPEC_LIKE_RE = re.compile(r"""(https?://[^\s"'`,;)<>]+|(?<=["'`])/[^\s"'`,;)<>]+)""")
+_SPEC_HINT_RE = re.compile(r"openapi|swagger|api-docs|/schema/?$|\.(json|ya?ml)(\?|$)", re.IGNORECASE)
+_NOT_SPEC_RE = re.compile(r"validator|oauth2-redirect|\.(js|css|png|svg|ico|html?|map)(\?|$)", re.IGNORECASE)
+_MAX_SPEC_CANDIDATES = 3
+_MAX_CONFIG_SCRIPTS = 2
+
+
+def _spec_candidates(texts: list[str], page_url: str) -> tuple[list[str], list[str]]:
+    """(URL de spec candidates, URL de configuration `configUrl`) trouvées dans les textes
+    d'une page de doc (HTML, scripts). Les URL données explicitement passent d'abord, puis les
+    chaînes qui ressemblent à une spec, celles du même hôte que la page d'abord."""
+    explicit: list[str] = []
+    configs: list[str] = []
+    loose: list[str] = []
+    query_url = parse_qs(urlparse(page_url).query).get("url")
+    if query_url:
+        explicit.append(query_url[0])  # petstore.swagger.io/?url=…
+    for text in texts:
+        for regex in _EXPLICIT_SPEC_RES:
+            explicit += [m.group(1) for m in regex.finditer(text)]
+        configs += [m.group(1) for m in _CONFIG_URL_RE.finditer(text)]
+        loose += [m.group(1) for m in _SPEC_LIKE_RE.finditer(text)]
+    host = urlparse(page_url).netloc
+
+    def usable(u: str) -> bool:
+        return bool(_SPEC_HINT_RE.search(u)) and not _NOT_SPEC_RE.search(u)
+
+    absolute = [urljoin(page_url, u) for u in explicit if not _NOT_SPEC_RE.search(u) and not u.startswith("#")]
+    others = sorted({urljoin(page_url, u) for u in loose if usable(u)} - set(absolute),
+                    key=lambda u: (urlparse(u).netloc != host, u))
+    seen: list[str] = []
+    for u in [*absolute, *others]:
+        if u.startswith(("http://", "https://")) and u not in seen:
+            seen.append(u)
+    return seen, [urljoin(page_url, u) for u in dict.fromkeys(configs)]
+
+
 @dataclass
 class _RawEndpoint:
     """Endpoint brut détecté avant conversion en DiscoveredTool."""
@@ -90,12 +215,26 @@ class _RawEndpoint:
 
 
 class WebDiscovery:
-    def __init__(self, config: ForgeConfig):
+    def __init__(self, config: ForgeConfig, url_guard: Callable[[str], None] | None = None):
         self.config = config
         self.base_url = self._extract_base(config.source)
+        # Contrôle de chaque URL lue en plus de la page de départ (spec, script ou
+        # configuration d'une page de doc) : l'API passe sa garde anti-SSRF
+        # (api/services/ssrf_guard.py) ; la CLI, aucune (localhost est un usage légitime).
+        self.url_guard = url_guard
+
+    def _allowed(self, url: str) -> bool:
+        if self.url_guard is None:
+            return True
+        try:
+            self.url_guard(url)
+        except Exception:
+            console.print(f"[dim]  Skipped, not a public address: {escape(url)}[/dim]")
+            return False
+        return True
 
     def discover(self) -> DiscoveryResult:
-        console.print("[bold]>> Analyse du site web...[/bold]")
+        console.print("[bold]>> Analyzing the website...[/bold]")
 
         # --- Étape 1 : OpenAPI ---
         result = self._try_openapi_discovery()
@@ -106,17 +245,17 @@ class WebDiscovery:
         html, final_url, is_js_heavy = self._fetch_page(self.config.source)
 
         if is_js_heavy:
-            console.print("[dim]  Page JS-heavy détectée, tentative avec Playwright...[/dim]")
+            console.print("[dim]  JS-heavy page detected, trying Playwright...[/dim]")
             html_js = self._fetch_with_playwright(self.config.source)
             if html_js:
                 html = html_js
 
         if not html:
-            console.print("[yellow]⚠ Impossible de charger la page.[/yellow]")
+            console.print("[yellow]⚠ Could not load the page.[/yellow]")
             return DiscoveryResult(
                 source_type=SourceType.WEBSITE,
                 source_url=self.config.source,
-                title="Site web",
+                title="Website",
             )
 
         soup = BeautifulSoup(html, "html.parser")
@@ -126,6 +265,13 @@ class WebDiscovery:
         openapi_link = self._find_openapi_link_in_html(soup)
         if openapi_link:
             result = self._try_openapi_from_url(openapi_link)
+            if result:
+                result.title = result.title or title
+                return result
+
+        # Page de documentation d'API (Swagger UI, Redoc) : la spec qu'elle affiche
+        if _DOC_PAGE_RE.search(html):
+            result = self._try_doc_page(soup, html, final_url or self.config.source)
             if result:
                 result.title = result.title or title
                 return result
@@ -141,27 +287,35 @@ class WebDiscovery:
         endpoints: list[_RawEndpoint] = []
         endpoints += self._extract_from_js(soup)
         endpoints += self._extract_from_forms(soup)
-        endpoints += self._extract_from_navigation(soup, origin_last_segment)
+        endpoints += self._extract_from_navigation(soup, origin_last_segment, source_path)
         # La page de DÉPART elle-même (l'URL que l'utilisateur a donnée à
         # mcp-forge) n'a aucune raison de se trouver dans ses propres liens
         # de nav — sans ce tool dédié, un LLM qui veut "le contenu de cette
         # page précise" devait deviner le bon paramètre d'un tool générique
         # (`/wiki/{slug}`) plutôt que d'avoir un accès direct. Signalé par
         # l'évaluateur qualité comme un manque de pertinence fonctionnelle,
-        # générique à tout site (pas seulement Wikipedia).
-        if source_path != "/":
-            endpoints.append(_RawEndpoint(
-                method="GET",
-                path=source_path,
-                description=f"Récupère le contenu de la page de départ : {title or source_path}",
-                source="origin",
-            ))
+        # générique à tout site (pas seulement Wikipedia). Correction C
+        # (2026-11-18) : aussi pour la racine du site (example.com donnait 0 tool).
+        endpoints.append(_RawEndpoint(
+            method="GET",
+            path=source_path,
+            description=f"Gets the content of the start page: {title or source_path}",
+            source="origin",
+        ))
 
-        # Déduplique et convertit
+        # Déduplique, plafonne et convertit
         endpoints = self._deduplicate(endpoints)
+        if len(endpoints) > WEBSITE_MAX_TOOLS:
+            console.print(f"[yellow]  ⚠ {len(endpoints)} tools found on the page: only {WEBSITE_MAX_TOOLS} are "
+                          "kept (start page, forms, script calls and link groups first)[/yellow]")
+            endpoints = _cap(endpoints)
         tools = [self._endpoint_to_tool(e) for e in endpoints]
 
-        console.print(f"[green][OK] {len(tools)} outil(s) MCP extrait(s) du site[/green]")
+        console.print(f"[green][OK] {len(tools)} MCP tool(s) extracted from the page: "
+                      f"{_found_summary(endpoints)}[/green]")
+        hint = few_tools_hint(len(tools), sep="\n  ")
+        if hint:
+            console.print(f"[yellow]⚠ {escape(hint)}[/yellow]")
 
         auth_schemes = self._detect_auth_from_html(html)
 
@@ -208,40 +362,120 @@ class WebDiscovery:
 
     def _try_openapi_discovery(self) -> DiscoveryResult | None:
         from .openapi import OpenAPIDiscovery
+        console.print("[dim]  Looking for an OpenAPI spec published by the site...[/dim]")
         try:
             sub_config = self.config.model_copy(update={"source_type": SourceType.OPENAPI})
-            result = OpenAPIDiscovery(sub_config).discover()
-            result.source_type = SourceType.WEBSITE
-            console.print("[green][OK] Spec OpenAPI trouvée automatiquement[/green]")
-            return result
+            result = OpenAPIDiscovery(sub_config, probe=True, url_guard=self.url_guard).discover()
         except Exception:
+            console.print("[dim]  No OpenAPI spec at the usual paths: reading the page[/dim]")
             return None
+        # Résultat OpenAPI tel quel (2026-11-19) : même serveur que depuis l'URL de la spec
+        # (gabarit OpenAPI, spec.json et spec_index.json, métadonnées des tools gardées dans le
+        # payload). Le type « website » donnait le gabarit des sites et retirait tout cela.
+        console.print("[green][OK] The site publishes an OpenAPI spec: the tools come from it[/green]")
+        return result
 
     def _find_openapi_link_in_html(self, soup: BeautifulSoup) -> str | None:
         """Cherche un lien vers une doc OpenAPI dans les balises <a> et <link>."""
+        # Jamais un fichier statique : `swagger-ui.css`, `redoc.standalone.js`,
+        # `swagger-ui-bundle.js` sont l'interface de la doc, pas la spec (ils étaient
+        # téléchargés comme des specs, puis les chemins usuels réessayés ; 2026-11-18)
+        static = re.compile(r"\.(js|mjs|css|png|svg|ico|woff2?|map)(\?|$)", re.IGNORECASE)
         for tag in soup.find_all(["a", "link"], href=True):
             href = tag["href"]
-            if _API_DOC_KEYWORDS.search(href):
+            if _API_DOC_KEYWORDS.search(href) and not static.search(href):
                 return urljoin(self.base_url, href)
-        # Cherche dans les scripts src
-        for tag in soup.find_all("script", src=True):
-            src = tag["src"]
-            if _API_DOC_KEYWORDS.search(src):
-                return urljoin(self.base_url, src)
         return None
 
     def _try_openapi_from_url(self, url: str) -> DiscoveryResult | None:
         from .openapi import OpenAPIDiscovery
+        if not self._allowed(url):  # lien vers un autre hôte : même garde que la page de départ
+            return None
         try:
             sub_config = self.config.model_copy(
                 update={"source": url, "source_type": SourceType.OPENAPI}
             )
-            result = OpenAPIDiscovery(sub_config).discover()
-            result.source_type = SourceType.WEBSITE
-            console.print(f"[green][OK] Spec OpenAPI trouvée via lien HTML : {url}[/green]")
+            result = OpenAPIDiscovery(sub_config, probe=True, url_guard=self.url_guard).discover()
+            # Résultat OpenAPI tel quel : voir _try_openapi_discovery
+            console.print(f"[green][OK] The page links to an OpenAPI spec, the tools come from it: "
+                          f"{escape(url)}[/green]")
             return result
         except Exception:
             return None
+
+    # ------------------------------------------------------------------
+    # Étape 1 ter : page de documentation d'API (Swagger UI, Redoc)
+    # ------------------------------------------------------------------
+
+    def _try_doc_page(self, soup: BeautifulSoup, html: str, page_url: str) -> DiscoveryResult | None:
+        """Spec affichée par une page Swagger UI ou Redoc : URL donnée dans la page, dans son
+        script de configuration (`swagger-initializer.js`…) ou par `configUrl`. Chaque URL lue
+        passe par `url_guard`, comme la page de départ ; au plus _MAX_SPEC_CANDIDATES specs
+        essayées."""
+        from .openapi import OpenAPIDiscovery, _looks_like_spec
+
+        console.print("[dim]  API documentation page (Swagger UI or Redoc): looking for the spec it shows...[/dim]")
+        texts = [html]
+        scripts = [urljoin(page_url, tag["src"]) for tag in soup.find_all("script", src=True)
+                   if _DOC_CONFIG_SCRIPT_RE.search(urlparse(tag["src"]).path)]
+        for script_url in scripts[:_MAX_CONFIG_SCRIPTS]:
+            text = self._fetch_text(script_url)
+            if text:
+                texts.append(text)
+        candidates, config_urls = _spec_candidates(texts, page_url)
+        for config_url in config_urls[:1]:  # springdoc : configUrl → {"url": …} ou {"urls": […]}
+            text = self._fetch_text(config_url)
+            try:
+                config = json.loads(text) if text else {}
+            except ValueError:
+                config = {}
+            if isinstance(config, dict):
+                urls = [config.get("url")] + [u.get("url") for u in config.get("urls") or [] if isinstance(u, dict)]
+                candidates = [urljoin(config_url, u) for u in urls if isinstance(u, str) and u] + candidates
+
+        for spec_url in list(dict.fromkeys(candidates))[:_MAX_SPEC_CANDIDATES]:
+            text = self._fetch_text(spec_url, spec=True)
+            if not text:
+                continue
+            loader = OpenAPIDiscovery(self.config.model_copy(update={"source": spec_url,
+                                                                   "source_type": SourceType.OPENAPI}),
+                                      probe=True, url_guard=self.url_guard)
+            try:
+                spec = loader._parse_content(text, spec_url)
+            except Exception:
+                continue
+            if not _looks_like_spec(spec):
+                continue
+            try:
+                loader.preloaded_spec = spec
+                result = loader.discover()
+            except Exception as exc:
+                console.print(f"[dim]  {escape(spec_url)}: unreadable spec ({escape(str(exc)[:120])})[/dim]")
+                continue
+            # Résultat OpenAPI tel quel : voir _try_openapi_discovery
+            console.print(f"[green][OK] The page shows the OpenAPI spec {escape(spec_url)}: "
+                          "the tools come from it[/green]")
+            return result
+        console.print("[dim]  No spec found for this documentation page: reading the page itself[/dim]")
+        return None
+
+    def _fetch_text(self, url: str, spec: bool = False) -> str | None:
+        """Texte d'une URL annexe (script, configuration, spec), après `url_guard` ; None si
+        refusée, en échec, trop grande ou trop longue. Limites communes (download.py) : spec
+        comme une spec donnée par URL, script ou configuration CONFIG_MAX_BYTES."""
+        if not url.startswith(("http://", "https://")) or not self._allowed(url):
+            return None
+        max_bytes, deadline = ((download.SPEC_MAX_BYTES, download.SPEC_DEADLINE_S) if spec
+                               else (download.CONFIG_MAX_BYTES, download.PAGE_DEADLINE_S))
+        try:
+            response = download.fetch(url, max_bytes=max_bytes, deadline_s=deadline,
+                                      headers={"Accept": "application/json, application/yaml, text/plain, */*"})
+        except (download.DownloadTooLarge, download.DownloadTooSlow) as exc:
+            console.print(f"[yellow]  ⚠ Skipped: {escape(str(exc))}[/yellow]")
+            return None
+        except Exception:
+            return None
+        return response.text if response.status_code == 200 else None
 
     # ------------------------------------------------------------------
     # Étape 2 : Détection d'appels API dans le JS inline
@@ -291,7 +525,7 @@ class WebDiscovery:
                     endpoints.append(_RawEndpoint(method="GET", path=path, source="js"))
 
         if endpoints:
-            console.print(f"[dim]  {len(endpoints)} endpoint(s) détecté(s) dans le JS[/dim]")
+            console.print(f"[dim]  {len(endpoints)} endpoint(s) detected in the JS[/dim]")
         return endpoints
 
     # ------------------------------------------------------------------
@@ -334,42 +568,42 @@ class WebDiscovery:
             ))
 
         if endpoints:
-            console.print(f"[dim]  {len(endpoints)} formulaire(s) trouvé(s)[/dim]")
+            console.print(f"[dim]  {len(endpoints)} form(s) found[/dim]")
         return endpoints
 
     def _extract_form_params(self, form: BeautifulSoup) -> list[ToolParameter]:
         params: list[ToolParameter] = []
         seen: set[str] = set()
 
-        for field in form.find_all(["input", "select", "textarea"]):
-            name = field.get("name") or field.get("id", "")
+        for form_field in form.find_all(["input", "select", "textarea"]):
+            name = form_field.get("name") or form_field.get("id", "")
             if not name or name in seen:
                 continue
-            if field.get("type") in ("submit", "reset", "button", "image"):
+            if form_field.get("type") in ("submit", "reset", "button", "image"):
                 continue
             seen.add(name)
 
-            input_type = field.get("type", "text") if field.name == "input" else "string"
+            input_type = form_field.get("type", "text") if form_field.name == "input" else "string"
             ptype = _INPUT_TYPE_MAP.get(input_type, ParameterType.STRING)
 
             # Description depuis un <label> associé
-            label_tag = form.find("label", attrs={"for": field.get("id", "")})
+            label_tag = form.find("label", attrs={"for": form_field.get("id", "")})
             desc = (
                 (label_tag.get_text(strip=True) if label_tag else "")
-                or field.get("placeholder", "")
-                or field.get("aria-label", "")
+                or form_field.get("placeholder", "")
+                or form_field.get("aria-label", "")
                 or name
             )
 
-            required = field.has_attr("required") or field.get("aria-required") == "true"
-            default = field.get("value") if input_type != "password" else None
+            required = form_field.has_attr("required") or form_field.get("aria-required") == "true"
+            default = form_field.get("value") if input_type != "password" else None
 
             # Options de <select>
             enum_values = []
-            if field.name == "select":
+            if form_field.name == "select":
                 enum_values = [
                     opt.get("value", opt.get_text(strip=True))
-                    for opt in field.find_all("option")
+                    for opt in form_field.find_all("option")
                     if opt.get("value") not in ("", None)
                 ]
 
@@ -396,13 +630,17 @@ class WebDiscovery:
     # pas) ne justifient pas la généralisation — ça reste des pages uniques.
     _NAV_TEMPLATE_MIN_COUNT = 3
 
-    def _extract_from_navigation(self, soup: BeautifulSoup, origin_last_segment: str = "") -> list[_RawEndpoint]:
-        # Cherche dans <nav>, <header>, ou les listes de liens
-        nav_containers = soup.find_all(["nav", "header"]) or [soup]
+    def _extract_from_navigation(self, soup: BeautifulSoup, origin_last_segment: str = "",
+                                 start_path: str = "") -> list[_RawEndpoint]:
+        # Toute la page, <nav> et <header> d'abord (correction A, 2026-11-18) : avant, seuls
+        # <nav> et <header> étaient lus quand la page en avait ; sur books.toscrape.com, le
+        # <header> n'a que le lien d'accueil et les 73 autres liens étaient ignorés. L'ordre
+        # garde la navigation en tête quand le plafond de tools s'applique (correction D).
+        containers = [*soup.find_all(["nav", "header"]), soup]
 
         raw_links: list[tuple[str, str]] = []  # (path, label)
         seen_paths: set[str] = set()
-        for container in nav_containers:
+        for container in containers:
             for link in container.find_all("a", href=True):
                 href = link["href"]
                 if href.startswith(("javascript:", "mailto:", "tel:", "#")):
@@ -412,7 +650,7 @@ class WebDiscovery:
                     continue  # lien externe
 
                 path = urlparse(full_url).path
-                if path in seen_paths or path in ("/", ""):
+                if path in seen_paths or path in ("/", "") or _same_page(path, start_path):
                     continue
                 # Ignore les fichiers statiques
                 if re.search(r"\.(css|js|png|jpg|gif|svg|ico|woff|ttf)$", path, re.IGNORECASE):
@@ -425,7 +663,7 @@ class WebDiscovery:
         endpoints = self._generalize_templated_links(raw_links, origin_last_segment)
 
         if endpoints:
-            console.print(f"[dim]  {len(endpoints)} lien(s) de navigation trouvé(s)[/dim]")
+            console.print(f"[dim]  {len(endpoints)} link(s) or link group(s) to pages of the site[/dim]")
         return endpoints
 
     def _generalize_templated_links(
@@ -441,7 +679,13 @@ class WebDiscovery:
         le lien n'était pas présent sur la page de départ — signalé par
         l'évaluateur qualité comme un vrai manque de couverture, pas
         spécifique à un site en particulier (n'importe quel site avec une
-        structure d'URL répétée a ce même problème)."""
+        structure d'URL répétée a ce même problème).
+
+        Correction B (2026-11-18) : ensuite, pour les liens restants, un seul
+        segment du milieu peut varier (`/catalogue/category/books/travel_2/
+        index.html` → `/catalogue/category/books/{slug}/index.html`). Le
+        dernier segment passe d'abord : les regroupements d'avant ne changent
+        pas."""
         groups: dict[tuple[str, ...], list[tuple[str, str]]] = {}
         for path, label in raw_links:
             segments = [s for s in path.split("/") if s]
@@ -450,7 +694,8 @@ class WebDiscovery:
             prefix = tuple(segments[:-1])
             groups.setdefault(prefix, []).append((segments[-1], label))
 
-        templated_prefixes = {
+        # Liste (ordre stable) et non ensemble : l'ordre des tools ne dépend plus du hachage
+        templated_prefixes = [
             prefix for prefix, items in groups.items()
             if (
                 # Insensible à la casse : /wiki/Foo et /wiki/FOO comptent comme
@@ -471,18 +716,22 @@ class WebDiscovery:
                 # sur plusieurs exécutions du même site.
                 or (origin_last_segment and any(last == origin_last_segment for last, _ in items))
             )
-        }
+        ]
+        templated = set(templated_prefixes)
+
+        remaining = [(path, label) for path, label in raw_links
+                     if tuple(s for s in path.split("/") if s)[:-1] not in templated]
+        middle = self._middle_segment_groups(remaining)
+        in_middle = {path for _, members in middle for path, _ in members}
 
         endpoints: list[_RawEndpoint] = []
-        for path, label in raw_links:
-            segments = [s for s in path.split("/") if s]
-            prefix = tuple(segments[:-1]) if len(segments) >= 2 else None
-            if prefix in templated_prefixes:
+        for path, label in remaining:
+            if path in in_middle:
                 continue  # remplacé plus bas par un seul outil générique
             endpoints.append(_RawEndpoint(
                 method="GET",
                 path=path,
-                description=f"Récupère le contenu de la page : {label}",
+                description=f"Gets the content of the page: {label}",
                 source="nav",
             ))
 
@@ -493,19 +742,61 @@ class WebDiscovery:
                 method="GET",
                 path=template_path,
                 description=(
-                    f"Récupère le contenu de n'importe quelle page sous /{'/'.join(prefix)}/ "
-                    f"en fournissant son identifiant (ex: {', '.join(examples)})."
+                    f"Gets the content of any page under /{'/'.join(prefix)}/ "
+                    f"from its identifier (e.g. {', '.join(examples)})."
                 ),
                 params=[ToolParameter(
                     name="slug",
                     type=ParameterType.STRING,
-                    description=f"Identifiant de la page sous /{'/'.join(prefix)}/ (ex: {examples[0]}).",
+                    description=f"Identifier of the page under /{'/'.join(prefix)}/ (e.g. {examples[0]}).",
+                    required=True,
+                )],
+                source="nav",
+            ))
+
+        for template_path, members in middle:
+            examples = [value for value, _ in _slug_values(template_path, members)[:3]]
+            endpoints.append(_RawEndpoint(
+                method="GET",
+                path=template_path,
+                description=(f"Gets the content of any page {template_path} from its identifier "
+                             f"(e.g. {', '.join(examples)})."),
+                params=[ToolParameter(
+                    name="slug",
+                    type=ParameterType.STRING,
+                    description=f"Identifier in {template_path} (e.g. {examples[0]}).",
                     required=True,
                 )],
                 source="nav",
             ))
 
         return endpoints
+
+    def _middle_segment_groups(
+        self, links: list[tuple[str, str]],
+    ) -> list[tuple[str, list[tuple[str, str]]]]:
+        """Groupes de liens qui ne diffèrent que par UN segment du milieu (au moins
+        _NAV_TEMPLATE_MIN_COUNT valeurs distinctes) : (chemin avec {slug}, liens du groupe).
+        Le plus grand groupe d'abord ; un lien n'entre que dans un groupe."""
+        candidates: dict[str, list[tuple[str, str]]] = {}
+        for path, label in links:
+            segments = [s for s in path.split("/") if s]
+            trailing = "/" if path.endswith("/") else ""
+            for i in range(1, len(segments) - 1):
+                template = "/" + "/".join([*segments[:i], "{slug}", *segments[i + 1:]]) + trailing
+                candidates.setdefault(template, []).append((path, label))
+
+        def distinct(template: str, members: list[tuple[str, str]]) -> int:
+            return len({value.lower() for value, _ in _slug_values(template, members)})
+
+        groups: list[tuple[str, list[tuple[str, str]]]] = []
+        taken: set[str] = set()
+        for template in sorted(candidates, key=lambda t: -distinct(t, candidates[t])):
+            members = [(p, lab) for p, lab in candidates[template] if p not in taken]
+            if distinct(template, members) >= self._NAV_TEMPLATE_MIN_COUNT:
+                groups.append((template, members))
+                taken.update(p for p, _ in members)
+        return groups
 
     # ------------------------------------------------------------------
     # Étape 5 : Fallback Playwright
@@ -523,13 +814,13 @@ class WebDiscovery:
                 return html
         except ImportError:
             console.print(
-                "[yellow]⚠ Ce site nécessite Playwright pour les pages JS.\n"
-                "  Installez-le avec :[/yellow] "
+                "[yellow]⚠ This site needs Playwright for its JS pages.\n"
+                "  Install it with:[/yellow] "
                 "[bold]pip install \"vulcai-mcp-forge-cli\\[web]\" && playwright install chromium[/bold]"
             )
             return None
         except Exception as e:
-            console.print(f"[dim]  Playwright échoué : {e}[/dim]")
+            console.print(f"[dim]  Playwright failed: {e}[/dim]")
             return None
 
     # ------------------------------------------------------------------
@@ -543,13 +834,16 @@ class WebDiscovery:
                 "User-Agent": "Mozilla/5.0 (compatible; mcp-forge/0.1; +https://github.com/mcp-forge)",
                 "Accept": "text/html,application/xhtml+xml,*/*",
             }
-            response = httpx.get(url, timeout=15, follow_redirects=True, headers=headers)
-            response.raise_for_status()
+            # Limites communes de taille et de temps (mcp_forge/discovery/download.py)
+            response = download.fetch(url, max_bytes=download.PAGE_MAX_BYTES,
+                                      deadline_s=download.PAGE_DEADLINE_S, headers=headers)
+            if response.status_code >= 400:
+                raise ValueError(f"HTTP {response.status_code} for {url}")
             html = response.text
             is_js_heavy = self._detect_js_heavy(html)
             return html, str(response.url), is_js_heavy
         except Exception as e:
-            console.print(f"[red]  [FAIL] Erreur de chargement : {e}[/red]")
+            console.print(f"[red]  [FAIL] Loading error: {e}[/red]")
             return None, None, False
 
     # ------------------------------------------------------------------
@@ -629,4 +923,5 @@ class WebDiscovery:
         """Transforme GET /api/users/{id} >> get_api_users_by_id."""
         path = re.sub(r"\{(\w+)\}", r"by_\1", path)
         path = re.sub(r"[^a-zA-Z0-9]+", "_", path).strip("_").lower()
-        return f"{method.lower()}_{path}" if path else method.lower()
+        # Racine du site (page de départ `/`, correction C) : get_home_page
+        return f"{method.lower()}_{path}" if path else f"{method.lower()}_home_page"

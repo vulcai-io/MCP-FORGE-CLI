@@ -32,7 +32,7 @@ def load_yaml_config(config_path: str | None) -> dict[str, Any]:
     if config_path:
         path = Path(config_path)
         if not path.exists():
-            raise FileNotFoundError(f"Fichier de configuration introuvable : {config_path}")
+            raise FileNotFoundError(f"Configuration file not found: {config_path}")
     else:
         candidate = Path(_DEFAULT_CONFIG_FILE)
         if candidate.exists():
