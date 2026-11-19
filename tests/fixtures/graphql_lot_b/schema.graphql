@@ -1,0 +1,28 @@
+# Test schema for the GraphQL parser; introspection.json is its introspection by graphql-core
+# with the mcp-forge introspection query (_INTROSPECTION_QUERY).
+scalar DateTime
+scalar JSON
+
+enum Color { RED GREEN BLUE }
+
+interface Node { id: ID! }
+type Cat implements Node { id: ID! name: String! lives: Int title: String }
+type Dog implements Node { id: ID! name: String! barks: Boolean title: String! }
+union Pet = Cat | Dog
+
+type Owner { id: ID! name: String favorite: Pet }
+
+type Query {
+  hello: String
+  color: Color
+  pet(id: ID!): Pet
+  node(id: ID!): Node
+  owner(id: ID!): Owner
+  points(matrix: [[Float!]!]!): [String]
+  byColor(color: Color!, others: [Color!]): [String]
+  since(when: DateTime, extra: JSON): [String]
+}
+
+type Mutation {
+  login(user: String!, password: String!): String
+}

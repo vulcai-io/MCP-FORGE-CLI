@@ -1,0 +1,59 @@
+name: Contributor checks
+
+# Offline parser tests (tests/, against the sources in src/) on main and on the `contributor`
+# branch, and the DCO sign-off check on pull requests. Read-only: no secrets are used, so it is
+# safe on pull requests from forks.
+on:
+  push:
+    branches: [main, contributor]
+  pull_request:
+    branches: [main, contributor]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: contributor-checks-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: astral-sh/setup-uv@v10.3.2
+        with:
+          version: "0.10.9"
+      - name: Install the test requirements (same versions as the published package's lock file)
+        run: |
+          uv venv --python ${{ matrix.python }} .venv
+          uv pip install --python .venv/bin/python -r requirements-dev.txt
+      - name: Parser tests, offline
+        run: .venv/bin/python -m pytest -m "not network" -q -p no:cacheprovider
+
+  dco:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          fetch-depth: 0
+      - name: Every commit is signed off (Developer Certificate of Origin)
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          missing=0
+          for c in $(git rev-list "$BASE..$HEAD"); do
+            author=$(git log -1 --format='%an <%ae>' "$c")
+            if ! git log -1 --format='%B' "$c" | grep -qiF "Signed-off-by: $author"; then
+              echo "::error::commit $c has no 'Signed-off-by: $author' line (use git commit -s)"
+              missing=1
+            fi
+          done
+          exit $missing

@@ -1,0 +1,19 @@
+# Everything needed to run the parser tests of the source mirror (src/).
+# Same versions as the published package's lock file. No API key, no
+# license and no network access are needed.
+#
+#   python -m venv .venv
+#   .venv/bin/pip install -r requirements-dev.txt      (Windows: .venv\Scripts\pip)
+#   .venv/bin/python -m pytest -m "not network" -q
+typer==0.24.1
+rich==14.3.3
+httpx==0.28.1
+pyyaml==6.0.3
+pydantic==2.12.5
+beautifulsoup4==4.14.3
+soupsieve==4.1.1
+mcp==1.30.0
+graphql-core==3.3.2
+python-dotenv==1.2.2
+pyflakes==4.0.3
+pytest==9.0.2

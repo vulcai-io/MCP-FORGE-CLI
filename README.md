@@ -116,6 +116,7 @@ Agents such as Claude or Cursor can also generate servers directly, by passing o
 - [Full CLI documentation and options (PyPI)](https://pypi.org/project/vulcai-mcp-forge-cli/)
 - [Homepage](https://mcp-forge.vulcai.io)
 - [Changelog](CHANGELOG.md)
+- [Contributing to the parsers](CONTRIBUTING.md)
 - [Trust & Security](https://mcp-forge.vulcai.io/trust)
 - [OWASP MCP Top 10 and mcp-forge](OWASP_MCP_TOP10.md)
 - [Troubleshooting](https://mcp-forge.vulcai.io/docs/troubleshooting/no-tools)
