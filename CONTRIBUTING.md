@@ -47,8 +47,9 @@ on every push and pull request (`.github/workflows/contributor-checks.yml`, Pyth
 
 ## Propose a parser or a fix
 
-1. **Start from an issue** labelled **`parser`**, or open one first for a new parser or a larger
-   change. Every issue gives:
+1. **Start from an issue** labelled **`parser`**
+   ([open parser issues](https://github.com/vulcai-io/MCP-FORGE-CLI/issues?q=is%3Aissue%20is%3Aopen%20label%3Aparser)),
+   or open one first for a new parser or a larger change. Every issue gives:
    - the file to change;
    - the current behaviour, reproduced on a small sample;
    - the expected behaviour;
