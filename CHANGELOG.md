@@ -69,7 +69,7 @@ Changes to the public MCP server are tracked in the
 - Keys and tokens no longer appear in crash tracebacks (`--api-key`,
   `ANTHROPIC_API_KEY`, `FORGE_LICENSE_KEY`, `mcp-forge.yaml`). If a crash
   printed one, change that key.
-- Website servers pin `soupsieve~=4.1.1` (CVE-2026-126190).
+- Website servers require `soupsieve~=4.1.1` (CVE-2026-126190).
 
 ### Changed
 
