@@ -68,6 +68,33 @@ The maintainers also run a parser benchmark on real corpora (thousands of OpenAP
 source repositories in 22 languages, GraphQL schemas, web pages). A change that lowers one of
 its measured indicators is not merged as it is.
 
+## Labels of an issue
+
+Every parser issue has the **`parser`** label, plus **one** label for the parser it concerns,
+the one whose file you change:
+
+| Label | Parser file (in `src/mcp_forge/discovery/`) |
+|---|---|
+| `source: openapi` | `openapi.py` (OpenAPI and Swagger specs, also when the website discovery finds one) |
+| `source: graphql` | `graphql.py` |
+| `source: cli` | `cli_app.py` (command-line tools, from their `--help`) |
+| `source: website` | `web.py` (one web page: forms, links, script calls) |
+| `lang: <language>` | `codebase/<language>.py`, for a codebase in that language |
+
+The `lang:` labels follow the codebase parsers: `python`, `javascript` (`js.py`),
+`typescript`, `go`, `java`, `kotlin`, `scala`, `groovy`, `csharp`, `cpp`, `rust`, `swift`,
+`dart`, `php`, `ruby`, `lua`, `elixir`, `r` (`r_lang.py`), `julia`, `bash`, `powershell`,
+`fortran` and `cobol`.
+
+- **C and C++** share one parser, `codebase/cpp.py`: use `lang: c` for a problem seen only on C
+  code (`.c` files, C headers), `lang: cpp` otherwise.
+- A problem in the code shared by all codebases (file discovery, language detection, the
+  coverage counts) gets `parser` alone, with every language concerned named in the issue.
+- An issue that touches two parsers gets both labels, but prefer two issues when the changes
+  can be made and tested separately.
+- `good first issue` marks issues with a small, well-located change and the tests already
+  described.
+
 ## Rules
 
 - **No secrets.** Never commit an API key, a token, a `.env` file or a real credential, not even
