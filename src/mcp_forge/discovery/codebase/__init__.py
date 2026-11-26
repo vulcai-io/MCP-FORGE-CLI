@@ -16,9 +16,9 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-from rich.console import Console
 from rich.progress import BarColumn, MofNCompleteColumn, Progress, SpinnerColumn, TextColumn
 
+from mcp_forge.console import EngineConsole
 from mcp_forge.discovery.codebase.bash import BashParser
 from mcp_forge.discovery.codebase.cobol import CobolParser
 from mcp_forge.discovery.codebase.cpp import HEADER_EXTENSIONS, CppParser
@@ -44,7 +44,7 @@ from mcp_forge.discovery.codebase.swift import SwiftParser
 from mcp_forge.discovery.codebase.typescript import TypeScriptParser
 from mcp_forge.models import DiscoveredTool, DiscoveryResult, ForgeConfig, SourceType
 
-console = Console()
+console = EngineConsole()  # requête des URL masquée (mcp_forge/console.py)
 
 _IGNORE_DIRS = {
     "__pycache__", ".git", ".venv", "venv", "env", "node_modules",

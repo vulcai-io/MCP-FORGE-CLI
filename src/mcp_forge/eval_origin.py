@@ -22,6 +22,12 @@ La garde est mécanique, jamais confiée au LLM :
   générateur (absent des instructions) reste `generateur`.
 Les descriptions restent comptées (décision du 2026-11-01) : aucune sorte
 « description ».
+
+Description empoisonnée venue de la spec (décision du PO du 2026-11-20, option A) : le constat
+reste `generateur` et compté (le serveur livré transmet le texte au LLM du client), mais il porte
+`transmis_de_la_source` quand toutes ses formules sont dans la description de l'opération dans
+la spec (faits transmis par le générateur, `description`) : l'affichage dit alors d'où vient le
+texte, au lieu de laisser croire que le générateur l'a écrit.
 """
 from __future__ import annotations
 
@@ -38,6 +44,7 @@ _LOCATIONS = {"path", "query", "header", "body", "formData"}
 _PY_TYPE = {"string": "str", "integer": "int", "number": "float", "boolean": "bool", "array": "list",
             "object": "dict"}
 _MAX_ENUM = 50
+_MAX_DESCRIPTION = 2_000
 _MIN_USER_PASSAGE = 12
 
 
@@ -61,8 +68,51 @@ def source_facts(tools: list) -> dict[str, dict[str, Any]]:
         facts[mcp_tool_name(tool.name) or tool.name] = {
             "method": (tool.http_method or "").upper(), "path": tool.endpoint or "", "params": params,
             "body_fields": body, "response_fields": sorted(_response_fields(response)),
+            # Texte de la spec, avant l'enrichissement : origine affichée d'une description
+            # empoisonnée (transmis_de_la_source), jamais une origine `source`
+            "description": _normalize(tool.description or "")[:_MAX_DESCRIPTION],
         }
+        flagged = _flagged_texts(tool)
+        if flagged:
+            facts[mcp_tool_name(tool.name) or tool.name]["flagged_texts"] = flagged
     return facts
+
+
+_MAX_FLAGGED = 20
+_MAX_FLAGGED_CHARS = 4_000
+
+
+def _flagged_texts(tool: Any) -> list[str]:
+    """Textes de la source qui contiennent une formule d'injection (option C),
+    sous la forme finale où le générateur les cite (schémas bornés compris,
+    _quoted_form). Eux seuls permettent de compter « mineur » une formule
+    citée par un bloc marqué (classify_origins)."""
+    from mcp_forge.discovery.limits import options_schema
+    from mcp_forge.instructions import visible
+    from mcp_forge.source_marking import findings, schema_texts
+    from mcp_forge.tools_list import output_schema_for_tool
+
+    options = getattr(tool, "option_parameters", None) or []
+    candidates = [tool.description or "", getattr(tool, "response_description", "") or "",
+                  *(p.description or "" for p in tool.parameters),
+                  *schema_texts(output_schema_for_tool(tool)),
+                  *(schema_texts(options_schema(options)) if options else [])]
+    flagged: list[str] = []
+    for text in candidates:
+        shown = visible(text)
+        if shown and findings(shown):
+            quoted = _quoted_form(shown)
+            if len(quoted) <= _MAX_FLAGGED_CHARS and quoted not in flagged:
+                flagged.append(quoted)
+        if len(flagged) >= _MAX_FLAGGED:
+            break
+    return flagged
+
+
+def _quoted_form(text: str) -> str:
+    """Texte tel que la docstring le garde : triples guillemets écrits avec
+    des apostrophes, espaces normalisés."""
+    return _normalize(text.replace('"' * 3, "'" * 3))
 
 
 def _response_fields(schema: dict, depth: int = 0) -> set[str]:
@@ -327,6 +377,33 @@ def _poisoning_from_user(bug: dict, texts: list[str]) -> bool:
     return labels <= found
 
 
+def _poisoning_from_source(bug: dict, spec: dict) -> bool:
+    """Constat mécanique d'empoisonnement dont toutes les formules sont dans la description d'une
+    opération de la spec, reprise dans le texte signalé."""
+    from mcp_forge.eval_annotations import _poison_findings
+    flagged = _normalize(bug.get("texte_signale") or "")
+    labels = set(bug.get("motifs") or [])
+    if not flagged or not labels:
+        return False
+    for fact in spec.values():
+        description = _normalize((fact or {}).get("description") or "")
+        if description and description in flagged and labels <= set(_poison_findings(description)):
+            return True
+    return False
+
+
+def _classify_marked(bug: dict, spec: dict) -> None:
+    from mcp_forge.eval_annotations import marked_description
+    known = {text for fact in spec.values() for text in (fact or {}).get("flagged_texts") or []}
+    quotes = bug.pop("textes_marques")
+    target = bug.pop("cible", "")
+    bug["origine"] = "generateur"
+    if quotes and all(_quoted_form(q) in known for q in quotes):
+        bug["severite"] = "mineur"
+        bug["description"] = marked_description(target, bug.get("motifs") or [])
+        bug["marque_de_la_source"] = True
+
+
 def classify_origins(report: dict, code: str, facts: dict | None) -> None:
     """Fixe `origine` sur chaque défaut (garde mécanique) et résume les
     défauts hors note dans `defauts_hors_note`."""
@@ -340,10 +417,16 @@ def classify_origins(report: dict, code: str, facts: dict | None) -> None:
         if not isinstance(bug, dict):
             continue
         claimed = bug.get("origine") if bug.get("origine") in ORIGINS else "generateur"
-        if bug.get("texte_signale") is not None:
+        if bug.get("textes_marques") is not None:
+            # Option C : formules citées par un bloc marqué ; « mineur » si
+            # chaque texte cité est un texte de la source, sinon « majeur »
+            _classify_marked(bug, spec)
+        elif bug.get("texte_signale") is not None:
             # Constat mécanique d'empoisonnement : utilisateur seulement si
             # toutes ses formules viennent des instructions de l'utilisateur
             bug["origine"] = "utilisateur" if _poisoning_from_user(bug, texts) else "generateur"
+            if bug["origine"] == "generateur" and _poisoning_from_source(bug, spec):
+                bug["transmis_de_la_source"] = True  # reste compté ; affichage : vient de la spec
             bug.pop("texte_signale")
         elif claimed == "source":
             reason, about_spec = _source_check(bug, spec, tools)

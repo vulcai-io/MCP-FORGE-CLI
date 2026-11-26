@@ -226,6 +226,9 @@ class DiscoveryPayload(InstructionsFields):
     spec_index:    list[dict[str, Any]] | None = None
     # --no-output-schema : aucun outputSchema dans les tools générés
     no_output_schema: bool = False
+    # Option C : False (--no-mark-source-descriptions) laisse les textes de la
+    # source tels quels ; le constat de l'évaluateur reste alors majeur
+    mark_source_descriptions: bool = True
     source_type:   SourceType
     title:         str = Field(default="", max_length=500)
     description:   str = Field(default="", max_length=10_000)
@@ -275,7 +278,7 @@ class DiscoveryPayload(InstructionsFields):
     def from_discovery_result(
         cls, result: DiscoveryResult, *,
         instructions: str | None = None, tool_instructions: dict[str, str] | None = None,
-        use_llm: bool = True, no_output_schema: bool = False,
+        use_llm: bool = True, no_output_schema: bool = False, mark_source_descriptions: bool = True,
     ) -> DiscoveryPayload:
         """Construit un payload sécurisé depuis un DiscoveryResult."""
         from mcp_forge import __version__
@@ -294,6 +297,7 @@ class DiscoveryPayload(InstructionsFields):
             tool_instructions=tool_instructions or {},
             use_llm=use_llm,
             no_output_schema=no_output_schema,
+            mark_source_descriptions=mark_source_descriptions,
             spec_document=(result.metadata or {}).get("spec_document")
             if result.source_type == SourceType.OPENAPI else None,
             spec_index=(result.metadata or {}).get("spec_index")

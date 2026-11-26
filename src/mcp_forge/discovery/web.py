@@ -17,9 +17,9 @@ from dataclasses import dataclass, field
 from urllib.parse import parse_qs, urljoin, urlparse
 
 from bs4 import BeautifulSoup
-from rich.console import Console
 from rich.markup import escape
 
+from mcp_forge.console import EngineConsole
 from mcp_forge.discovery import download
 from mcp_forge.models import (
     AuthScheme,
@@ -32,7 +32,7 @@ from mcp_forge.models import (
     ToolParameter,
 )
 
-console = Console()
+console = EngineConsole()  # requête des URL masquée (mcp_forge/console.py)
 
 # Chemins courants où une spec OpenAPI peut se trouver
 _OPENAPI_PATHS = [
@@ -468,9 +468,9 @@ class WebDiscovery:
         max_bytes, deadline = ((download.SPEC_MAX_BYTES, download.SPEC_DEADLINE_S) if spec
                                else (download.CONFIG_MAX_BYTES, download.PAGE_DEADLINE_S))
         try:
-            response = download.fetch(url, max_bytes=max_bytes, deadline_s=deadline,
+            response = download.fetch(url, max_bytes=max_bytes, deadline_s=deadline, url_guard=self.url_guard,
                                       headers={"Accept": "application/json, application/yaml, text/plain, */*"})
-        except (download.DownloadTooLarge, download.DownloadTooSlow) as exc:
+        except (download.DownloadTooLarge, download.DownloadTooSlow, download.RedirectRefused) as exc:
             console.print(f"[yellow]  ⚠ Skipped: {escape(str(exc))}[/yellow]")
             return None
         except Exception:
@@ -836,12 +836,15 @@ class WebDiscovery:
             }
             # Limites communes de taille et de temps (mcp_forge/discovery/download.py)
             response = download.fetch(url, max_bytes=download.PAGE_MAX_BYTES,
-                                      deadline_s=download.PAGE_DEADLINE_S, headers=headers)
+                                      deadline_s=download.PAGE_DEADLINE_S, headers=headers,
+                                      url_guard=self.url_guard)
             if response.status_code >= 400:
                 raise ValueError(f"HTTP {response.status_code} for {url}")
             html = response.text
             is_js_heavy = self._detect_js_heavy(html)
             return html, str(response.url), is_js_heavy
+        except download.RedirectRefused:
+            raise  # la page de départ renvoie vers une adresse refusée : dit tel quel
         except Exception as e:
             console.print(f"[red]  [FAIL] Loading error: {e}[/red]")
             return None, None, False

@@ -62,7 +62,8 @@ def run_remote(result: DiscoveryResult, config: ForgeConfig) -> GeneratedServer:
     try:
         payload = DiscoveryPayload.from_discovery_result(
             result, instructions=config.server_instructions, tool_instructions=config.tool_instructions,
-            use_llm=not config.no_llm, no_output_schema=config.no_output_schema)
+            use_llm=not config.no_llm, no_output_schema=config.no_output_schema,
+            mark_source_descriptions=config.mark_source_descriptions)
     except ValidationError as exc:
         # Dernier recours : la découverte respecte déjà les limites du payload
         # (mcp_forge/discovery/limits.py) ; jamais de trace Python brute

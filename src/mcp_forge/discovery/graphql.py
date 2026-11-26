@@ -11,13 +11,14 @@ from __future__ import annotations
 
 import json
 import re
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
 import httpx
-from rich.console import Console
 from rich.markup import escape
 
+from mcp_forge.console import EngineConsole
 from mcp_forge.discovery import download
 from mcp_forge.discovery.response_schema import from_graphql
 from mcp_forge.models import (
@@ -31,7 +32,7 @@ from mcp_forge.models import (
     ToolParameter,
 )
 
-console = Console()
+console = EngineConsole()  # requête des URL masquée (mcp_forge/console.py)
 
 
 class GraphQLAuthRequired(ValueError):
@@ -154,9 +155,12 @@ _GQL_TYPE_MAP: dict[str, ParameterType] = {
 
 
 class GraphQLDiscovery:
-    def __init__(self, config: ForgeConfig):
+    def __init__(self, config: ForgeConfig, url_guard: Callable[[str], None] | None = None):
         self.config = config
         self.endpoint = config.source
+        # Garde anti-SSRF de l'API, appliquée aussi à chaque redirection suivie (download.fetch) ;
+        # la CLI n'en passe aucune (localhost est un usage légitime)
+        self.url_guard = url_guard
 
     def discover(self) -> DiscoveryResult:
         console.print("[bold]>> Introspection GraphQL...[/bold]")
@@ -228,11 +232,12 @@ class GraphQLDiscovery:
             # Limites communes (mcp_forge/discovery/download.py) : une petite réponse attendue
             response = download.fetch(self.endpoint, method="POST", json={"query": "{ __typename }"},
                                       headers={"Content-Type": "application/json"},
-                                      max_bytes=download.CONFIG_MAX_BYTES, deadline_s=download.PAGE_DEADLINE_S)
+                                      max_bytes=download.CONFIG_MAX_BYTES, deadline_s=download.PAGE_DEADLINE_S,
+                                      url_guard=self.url_guard)
             if response.status_code in (401, 403):
                 console.print("[dim]  Authentication required (401/403 on the probe) → Bearer token[/dim]")
                 return [_bearer()]
-        except (httpx.HTTPError, download.DownloadTooLarge, download.DownloadTooSlow):
+        except (httpx.HTTPError, download.DownloadTooLarge, download.DownloadTooSlow, download.RedirectRefused):
             pass
         return []
 
@@ -267,6 +272,7 @@ class GraphQLDiscovery:
                 headers={"Content-Type": "application/json", "Accept": "application/json",
                          **self.config.extra_headers},
                 max_bytes=download.SPEC_MAX_BYTES, deadline_s=download.SPEC_DEADLINE_S,
+                url_guard=self.url_guard,
             )
             if response.status_code in (401, 403) and not self.config.extra_headers:
                 raise GraphQLAuthRequired(
@@ -280,7 +286,7 @@ class GraphQLDiscovery:
                 console.print(f"[red]  [FAIL] GraphQL errors: {escape(str(data['errors']))}[/red]")
                 return None
             return data
-        except (download.DownloadTooLarge, download.DownloadTooSlow) as exc:
+        except (download.DownloadTooLarge, download.DownloadTooSlow, download.RedirectRefused) as exc:
             # Refus explicite : la raison (taille, durée) est donnée à l'utilisateur
             raise ValueError(f"Could not introspect the GraphQL schema: {exc}") from exc
         except GraphQLAuthRequired:

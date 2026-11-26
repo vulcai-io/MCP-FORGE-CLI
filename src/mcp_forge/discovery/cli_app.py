@@ -16,8 +16,7 @@ import shlex
 import subprocess
 from dataclasses import dataclass, field
 
-from rich.console import Console
-
+from mcp_forge.console import EngineConsole
 from mcp_forge.models import (
     AuthScheme,
     AuthType,
@@ -29,7 +28,7 @@ from mcp_forge.models import (
     ToolParameter,
 )
 
-console = Console()
+console = EngineConsole()  # requête des URL masquée (mcp_forge/console.py)
 
 _MAX_DEPTH = 2
 _TIMEOUT = 10

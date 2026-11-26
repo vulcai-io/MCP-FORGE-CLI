@@ -11,6 +11,69 @@ Changes to the public MCP server are tracked in the
 
 ---
 
+## [0.4.5] - 2026-11-26
+
+### Security — instruction-like text from the source is quoted as untrusted data
+
+- A spec, a GraphQL schema or a website can hold text written to steer the
+  client's LLM (`<IMPORTANT>` tags, HTML comments, "ignore previous
+  instructions", reading `~/.ssh/id_rsa`). The generated server keeps it word
+  for word, but quotes it as untrusted data: a header says where it comes
+  from and that it is not an instruction, and each line starts with `> `.
+  Tags and HTML comments are shown as `[IMPORTANT tag]` and `[HTML comment]`.
+  Allowed values are never changed.
+- This lowers the risk without removing it: the client's LLM still reads the
+  text. The evaluator counts such a finding as minor when the quoted text is
+  the source's own. Any other finding stays major.
+- `--no-mark-source-descriptions` (or `mark_source_descriptions: false` in
+  `mcp-forge.yaml` and in the API) leaves the text as is, for your own spec.
+  The finding then stays major. A server evaluated on its own
+  (`mcp-forge evaluate`) has no facts of its source, so the finding stays
+  major there too.
+
+### Fixed
+
+- The evaluator no longer counts AWS `<important>` documentation as an
+  injection. Servers generated from 104 AWS specs of the APIs.guru corpus had
+  a major poisoned-description finding: the 607 flagged texts were all AWS
+  documentation. An `<important>` block now counts only with an injection cue
+  inside it (another pattern, a sentence addressed to the agent, a request to
+  pass on a secret, or to send the conversation or data to a URL).
+  `~/.ssh/authorized_keys`, `known_hosts` and "You are now ready to make
+  requests" are no longer flagged.
+- A poisoned description from the spec says so under the finding, instead of
+  implying that mcp-forge wrote it. "Analyse statique" is now "Static
+  analysis".
+- A tool description no longer repeats the operation's summary ("Update an
+  existing pet by Id." instead of "Update an existing pet. Update an existing
+  pet by Id."). A summary that YAML reads as a number no longer breaks
+  parsing.
+- Generated Go and Rust servers warm their toolchain at startup: the first
+  call no longer times out on a fresh machine (with the API deployment).
+
+### Security — URLs printed by the CLI hide their query string
+
+- A URL printed during discovery or generation keeps its host and path; its
+  query and fragment become `?…`. A token passed in a URL no longer shows on
+  screen or in CI logs.
+
+### Added
+
+- Generated servers behind a reverse proxy: `TRUST_X_FORWARDED_FOR=1` and
+  `TRUSTED_PROXY_HOPS` make the OAuth rate limit count the address the proxy
+  adds. Off by default (with the API deployment).
+
+### Hosted service (no CLI update needed)
+
+- Website and spec discovery checks every redirect and connects to the
+  address it checked (SSRF through redirects and DNS rebinding).
+- Login and sign-up limits count the address the platform's proxy adds.
+- No third-party error text in account responses.
+- A sandbox to try a generation without an account
+  (https://mcp-forge.vulcai.io/sandbox), and `security.txt`.
+
+---
+
 ## [0.4.4] - 2026-11-19
 
 ### Security — regenerate servers made from a documentation page with 0.4.3

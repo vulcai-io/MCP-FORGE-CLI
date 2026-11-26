@@ -147,6 +147,10 @@ class ForgeConfig(BaseModel):
     exclude_paths: list[str] = Field(default_factory=list)
     # Aucun outputSchema dans les tools générés (liste des tools plus courte)
     no_output_schema: bool = False
+    # Option C : textes de la source qui contiennent une formule d'injection
+    # cités comme des données (mcp_forge/source_marking.py) ; False :
+    # --no-mark-source-descriptions, le constat de l'évaluateur reste majeur
+    mark_source_descriptions: bool = True
     # Qui génère : "cli" (local) ou "api" (api/services/generate.py), écrit
     # dans le fichier VERSION avec la vraie version (mcp_forge/build_info.py)
     generated_by: Literal["cli", "api"] = "cli"

@@ -21,7 +21,7 @@ def _post_via_fetch(monkeypatch, fake) -> None:
     `fake(url, json=..., headers=...)` returns an httpx.Response, like httpx.post."""
     from mcp_forge.discovery import download
 
-    def fetch(url, *, max_bytes, deadline_s, headers=None, method="GET", json=None):
+    def fetch(url, *, max_bytes, deadline_s, headers=None, method="GET", json=None, url_guard=None):
         response = fake(url, json=json, headers=headers)
         return download.Downloaded(response.status_code, response.text, url)
 

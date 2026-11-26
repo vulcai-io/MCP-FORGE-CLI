@@ -67,6 +67,8 @@ Besides the model's judgement, the evaluator runs mechanical checks (compilation
 mcp-forge evaluate output/my_server/server.py --save report.json
 ```
 
+Text from the source that looks like an instruction to the client's LLM (`<IMPORTANT>` tags, HTML comments, "ignore previous instructions"…) is kept word for word in the generated server, but quoted as untrusted data. This lowers the risk without removing it; the evaluator counts it as minor. For your own spec, `--no-mark-source-descriptions` leaves it as is, and the finding then stays major, as it does for a server evaluated on its own.
+
 <!-- Screenshot: add a real evaluator report here as ![evaluator report](docs/evaluator-report.png) -->
 
 You can also check that a server starts and speaks MCP correctly with `mcp-forge smoke-test` (no startup needed) and `mcp-forge functional-test` (starts the server and runs a real handshake).

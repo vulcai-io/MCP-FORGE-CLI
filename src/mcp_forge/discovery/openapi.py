@@ -14,9 +14,9 @@ from typing import Any
 from urllib.parse import urljoin, urlparse
 
 import yaml
-from rich.console import Console
 from rich.markup import escape
 
+from mcp_forge.console import EngineConsole
 from mcp_forge.discovery import download
 from mcp_forge.discovery.limits import (
     EXCLUDED_BY_FILTER,
@@ -40,7 +40,7 @@ from mcp_forge.models import (
     ToolParameter,
 )
 
-console = Console()
+console = EngineConsole()  # requête des URL masquée (mcp_forge/console.py)
 
 _TYPE_MAP: dict[str, ParameterType] = {
     "string": ParameterType.STRING,
@@ -67,6 +67,36 @@ def _text(value: Any) -> str:
     if value is None:
         return ""
     return value if isinstance(value, str) else str(value)
+
+
+def _comparable(text: str) -> str:
+    """Texte comparé : espaces réduits, point final retiré, sans casse."""
+    return " ".join(text.split()).rstrip(".").strip().casefold()
+
+
+def combine_summary_and_description(summary: str, detail: str) -> str:
+    """Description d'un tool à partir du `summary` et de la `description` d'une opération.
+
+    Avant le 2026-11-20 : toujours mis bout à bout, d'où « Update an existing pet. Update an
+    existing pet by Id. » (Petstore) dans les serveurs générés sans IA. Désormais (décision du PO) :
+    - la description commence par le résumé, mot pour mot : la description seule ;
+    - le résumé reprend toute la description (ou les deux sont identiques) : le résumé seul ;
+    - sinon : les deux, comme avant.
+    La comparaison ignore la casse, les espaces et le point final, et s'arrête sur une limite de
+    mot (« pet » n'est pas repris par « petition »)."""
+    summary, detail = (summary or "").strip(), (detail or "").strip()
+    if not (summary and detail):
+        return summary or detail
+    s, d = _comparable(summary), _comparable(detail)
+
+    def starts_with_words(text: str, prefix: str) -> bool:
+        return text == prefix or (text.startswith(prefix) and not text[len(prefix)].isalnum())
+
+    if starts_with_words(d, s):
+        return detail
+    if starts_with_words(s, d):
+        return summary
+    return f"{summary.rstrip('.')}. {detail}"
 
 
 def _json_type(schema: dict) -> ParameterType:
@@ -376,8 +406,9 @@ class OpenAPIDiscovery:
                     continue
             try:
                 # Limites communes de taille et de temps (mcp_forge/discovery/download.py)
+                # url_guard : chaque redirection suivie repasse par la garde (download.fetch)
                 response = download.fetch(candidate, max_bytes=download.SPEC_MAX_BYTES,
-                                          deadline_s=download.SPEC_DEADLINE_S)
+                                          deadline_s=download.SPEC_DEADLINE_S, url_guard=self.url_guard)
                 if response.status_code != 200:
                     continue
                 try:
@@ -389,7 +420,7 @@ class OpenAPIDiscovery:
                     return spec
                 if not self.probe:
                     console.print(f"[dim]  {escape(candidate)}: not an OpenAPI spec[/dim]")
-            except (download.DownloadTooLarge, download.DownloadTooSlow) as e:
+            except (download.DownloadTooLarge, download.DownloadTooSlow, download.RedirectRefused) as e:
                 if candidate == url and not self.probe:
                     # L'URL donnée par l'utilisateur : refus explicite, pas d'essai ailleurs
                     raise ValueError(f"Could not load the OpenAPI spec: {e}") from e
@@ -470,7 +501,7 @@ class OpenAPIDiscovery:
         tags    = operation.get("tags", [])
 
         if summary and detail:
-            description = f"{summary.rstrip('.')}. {detail}"
+            description = combine_summary_and_description(_text(summary), _text(detail))
         elif summary:
             description = summary
         elif detail:
