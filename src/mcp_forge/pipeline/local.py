@@ -28,7 +28,7 @@ def run_local(result: DiscoveryResult, config: ForgeConfig) -> GeneratedServer:
     # Faits de la spec et instructions de l'utilisateur : garde d'origine des
     # défauts (mcp_forge/eval_origin.py), pris avant l'enrichissement
     from mcp_forge.eval_origin import source_facts, user_texts
-    facts = source_facts(result.tools)
+    facts = source_facts(result.tools, result.source_type)
     texts = user_texts(config.server_instructions, config.tool_instructions)
     if config.use_llm_enrichment:
         from mcp_forge.enrichment.llm import LLMEnricher

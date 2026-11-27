@@ -66,7 +66,7 @@ class MCPValidator:
         if result.returncode != 0:
             console.print(f"[red]  [FAIL] Syntax error: {result.stderr.strip()[:200]}[/red]")
             return False
-        console.print("[dim]  [OK] Syntaxe Python valide[/dim]")
+        console.print("[dim]  [OK] Valid Python syntax[/dim]")
         return True
 
     def _check_syntax_light(self, path: Path) -> bool:

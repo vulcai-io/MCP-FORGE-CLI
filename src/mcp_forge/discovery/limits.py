@@ -53,7 +53,8 @@ def large_api_message(count: int) -> str:
 
 
 # Emplacements jamais regroupés : chemin, fichier, corps binaire ou tableau
-_SEPARATE = ("path", "file_upload", "body_binary", "body_array")
+# « positional » : argument positionnel d'une application CLI, dont l'ordre compte (2026-11-26)
+_SEPARATE = ("path", "file_upload", "body_binary", "body_array", "positional")
 
 
 def parse_list(values: Any) -> list[str]:

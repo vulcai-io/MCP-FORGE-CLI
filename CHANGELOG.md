@@ -11,6 +11,61 @@ Changes to the public MCP server are tracked in the
 
 ---
 
+## [0.4.6] - 2026-11-27
+
+### Fixed — CLI applications with more than 50 options
+
+- `mcp-forge run git` failed: `git diff` lists 68 options outside a repository,
+  and the API accepts 50 parameters per tool. As for OpenAPI, the optional
+  options beyond 50 now go in a single `options` object (its schema lists the
+  accepted names); positional arguments stay separate. Unknown keys are refused,
+  and no value may start with "-".
+- When a source exceeds an API limit, the message now gives advice for that
+  source (one subcommand at a time for a CLI application), instead of the
+  OpenAPI filters (`--include-tags`).
+- An option written `--output FILE` is optional again: the value is required
+  when the option is given, not the option itself. Before, the generated tool
+  demanded it on every call.
+
+### Fixed — the evaluator no longer lowers scores for defects of its own
+
+- The facts the evaluator checks a server against now give the location the
+  server really uses (`/wiki/{slug}` is in the path, not the query) and, for a
+  codebase or a CLI application, `argument` instead of `query`.
+- A codebase parameter without a type in the code (`def sum_list(numbers)` in
+  Elixir, Groovy, PHP, Dart…) was described as "declared string" (the parser's
+  default), while the server uses the type the enrichment found; it is now
+  "untyped in the source". Declared types are unchanged.
+- `readOnlyHint=False` on a codebase or CLI tool is deliberate (the server
+  cannot see what the code does) and is no longer reported as a defect.
+
+### Fixed — refinement
+
+- A server is refined only for a major or blocking finding: refining for minor
+  findings cost money and was rejected in every case we measured.
+- A refined function is put back only for a new major or blocking finding about
+  it; a finding that names more than two tools is about the server, and no
+  longer undoes the refinement.
+- When the re-evaluation rejects a refinement, the CLI says so: "Refinement
+  tried for N function(s), rejected by the re-evaluation: original kept".
+
+### Fixed — generated codebase servers
+
+- Go and Swift drivers write `nil` for a missing value (they wrote `null`).
+- `json` and `re` are imported once (they were imported twice in bash, C#,
+  Kotlin… servers).
+- A generated prompt that names a tool that always returns an error (a
+  monolithic COBOL unit) is dropped.
+- The last French line of the CLI output, "[OK] Syntaxe Python valide", is now
+  "[OK] Valid Python syntax".
+
+### Hosted service (no CLI update needed)
+
+- The evaluator and refinement changes apply to every generation made through
+  the API.
+
+---
+
 ## [0.4.5] - 2026-11-26
 
 ### Security — instruction-like text from the source is quoted as untrusted data

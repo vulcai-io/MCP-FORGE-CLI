@@ -91,13 +91,15 @@ def test_angle_bracket_value_hint_treated_as_optional_flag_value():
     assert author.required is False
 
 
-def test_bare_allcaps_value_hint_still_treated_as_required():
-    """Historical behaviour kept: a bare ALLCAPS hint (without brackets) is still treated as
-    required as soon as the flag is used."""
+def test_bare_allcaps_value_hint_is_an_optional_flag_too():
+    """A bare ALLCAPS hint ("--output FILE") means the value is required when the flag is given,
+    not that the flag is: the parameter of the MCP tool stays optional. Before, every call of the
+    generated tool demanded it."""
     help_text = "usage: tool [<options>]\n\n    --output FILE    write to FILE\n"
     params, _ = _parse(help_text)
     output = next(p for p in params if p.name == "output")
-    assert output.required is True
+    assert output.required is False
+    assert output.type.value == "string"  # the flag still takes a value (not a switch)
 
 
 def test_usage_synopsis_flags_are_not_mistaken_for_option_entries():

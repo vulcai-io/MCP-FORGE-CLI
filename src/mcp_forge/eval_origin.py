@@ -40,7 +40,7 @@ from mcp_forge.naming import mcp_tool_name
 ORIGINS = ("generateur", "source", "utilisateur")
 SOURCE_KINDS = ("methode", "chemin", "emplacement", "obligatoire", "type", "champ_corps",
                 "valeurs_permises", "schema_reponse")
-_LOCATIONS = {"path", "query", "header", "body", "formData"}
+_LOCATIONS = {"path", "query", "header", "body", "formData", "argument"}
 _PY_TYPE = {"string": "str", "integer": "int", "number": "float", "boolean": "bool", "array": "list",
             "object": "dict"}
 _MAX_ENUM = 50
@@ -50,16 +50,30 @@ _MIN_USER_PASSAGE = 12
 
 # --- Faits de la source (transmis par le générateur) ---------------------------
 
-def source_facts(tools: list) -> dict[str, dict[str, Any]]:
+# Type d'un paramètre qu'une codebase ou un outil CLI ne déclare pas : le parseur met « string »
+# par défaut, que l'enrichissement peut préciser (décision du PO du 2026-11-27 : l'évaluateur
+# lisait « la source déclare string » pour `def sum_list(numbers)` en Elixir)
+UNTYPED = "untyped in the source"
+
+
+def source_facts(tools: list, source_type: Any = None) -> dict[str, dict[str, Any]]:
     """Faits de la spec par nom MCP, pris sur les tools découverts AVANT
-    l'enrichissement (le LLM ne touche ni aux paramètres ni aux chemins)."""
+    l'enrichissement (le LLM ne touche ni aux paramètres ni aux chemins).
+    L'emplacement est celui du serveur généré (mcp_forge/param_location.py) ;
+    `argument` pour une codebase ou un outil CLI, où un « string » est le type
+    par défaut d'un paramètre non typé (UNTYPED)."""
+    from mcp_forge.models import ParameterType, SourceType
+    from mcp_forge.param_location import fact_location
+
+    untyped_default = source_type in (SourceType.CODEBASE, SourceType.CLI_APP)
     facts: dict[str, dict[str, Any]] = {}
     for tool in tools:
         params: dict[str, dict[str, Any]] = {}
         body: list[str] = []
         for p in [*tool.parameters, *getattr(tool, "option_parameters", [])]:
-            location = "body" if p.param_in in ("body", "body_array") else (p.param_in or "query")
-            params[p.name] = {"in": location, "required": bool(p.required), "type": p.type.value,
+            location = fact_location(p, tool.endpoint, tool.http_method, source_type)
+            kind = UNTYPED if untyped_default and p.type == ParameterType.STRING else p.type.value
+            params[p.name] = {"in": location, "required": bool(p.required), "type": kind,
                               "format": getattr(p, "format", "") or "",
                               "enum": [str(v) for v in (p.enum_values or [])][:_MAX_ENUM]}
             if location in ("body", "formData"):

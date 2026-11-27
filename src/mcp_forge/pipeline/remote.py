@@ -17,6 +17,7 @@ from pathlib import Path
 import httpx
 from pydantic import ValidationError
 from rich.console import Console
+from rich.markup import escape
 
 from mcp_forge.models import DiscoveryResult, ForgeConfig, GeneratedServer, SourceType
 from mcp_forge.schemas.payload import DiscoveryPayload
@@ -37,13 +38,27 @@ class RemoteError(Exception):
     """Erreur levée par le pipeline distant (affichée après la fin du spinner)."""
 
 
-def _payload_error_message(exc: ValidationError) -> str:
-    """Message lisible pour un payload refusé par sa propre validation."""
+# Que faire quand la source dépasse une limite du payload, selon la source (2026-11-26 : pour
+# une application CLI, le conseil --include-tags ne s'appliquait pas)
+_LIMIT_ADVICE = {
+    SourceType.OPENAPI: "Generate fewer operations: --include-tags / --include-paths "
+                        "(or --exclude-tags / --exclude-paths).",
+    SourceType.CLI_APP: "Generate from one subcommand at a time, e.g. mcp-forge run \"git log\" instead of "
+                        "mcp-forge run git.",
+    SourceType.GRAPHQL: "The schema has more operations or arguments than the API accepts; generate from a "
+                        "smaller schema file.",
+    SourceType.CODEBASE: "Generate from a smaller part of the codebase (a single folder or module).",
+    SourceType.WEBSITE: "Generate from a single page of the site, or from its OpenAPI spec if it has one.",
+}
+
+
+def _payload_error_message(exc: ValidationError, source_type: SourceType | None = None) -> str:
+    """Message lisible pour un payload refusé par sa propre validation, avec le conseil
+    propre à la source."""
     first = exc.errors()[0] if exc.errors() else {}
     where = ".".join(str(x) for x in first.get("loc", ())) or "payload"
-    return (f"The source exceeds an API limit ({where}: {first.get('msg', 'invalid')}).\n"
-            "  Generate fewer operations: --include-tags / --include-paths "
-            "(or --exclude-tags / --exclude-paths).")
+    advice = _LIMIT_ADVICE.get(source_type, "Generate from a smaller part of the source.")
+    return f"The source exceeds an API limit ({where}: {first.get('msg', 'invalid')}).\n  {advice}"
 
 
 def run_remote(result: DiscoveryResult, config: ForgeConfig) -> GeneratedServer:
@@ -67,7 +82,7 @@ def run_remote(result: DiscoveryResult, config: ForgeConfig) -> GeneratedServer:
     except ValidationError as exc:
         # Dernier recours : la découverte respecte déjà les limites du payload
         # (mcp_forge/discovery/limits.py) ; jamais de trace Python brute
-        raise RemoteError(_payload_error_message(exc)) from exc
+        raise RemoteError(_payload_error_message(exc, result.source_type)) from exc
     if result.source_type == SourceType.CODEBASE:
         # Codebase : souvent volumineuse (enrichissement LLM long). Passe par
         # un job asynchrone, sans la limite de 220 s de POST /v1/generate.
@@ -323,11 +338,25 @@ def wait_for_evaluation(
             time.sleep(poll_interval)
 
 
+def refine_rejected_message(report: dict | None) -> str:
+    """Ligne affichée quand le raffinement a été rejeté, pour tout ou partie des fonctions
+    (régénération du 2026-11-26 : 8 raffinements rejetés sans que le CLI le dise)."""
+    restored = (report or {}).get("refine_restored") if isinstance(report, dict) else None
+    if not restored:
+        return ""
+    names = ", ".join(str(n) for n in restored[:8]) + (f" (+{len(restored) - 8})" if len(restored) > 8 else "")
+    return (f"[yellow]  Refinement tried for {len(restored)} function(s), rejected by the re-evaluation: "
+            f"original kept ({escape(names)}).[/yellow]")
+
+
 def _print_evaluation(view: dict) -> None:
     st = view.get("status")
     if st == "done":
         refined = " (fixed after evaluation)" if view.get("refined") else ""
         console.print(f"[bold]Evaluation score: {view.get('score')}/10[/bold]{refined}")
+        rejected = refine_rejected_message(view.get("eval_report"))
+        if rejected:
+            console.print(rejected)
     elif st == "failed":
         console.print("[yellow]The evaluation failed: the delivered version has no score.[/yellow]")
     elif st == "skipped":

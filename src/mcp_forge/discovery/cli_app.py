@@ -17,6 +17,7 @@ import subprocess
 from dataclasses import dataclass, field
 
 from mcp_forge.console import EngineConsole
+from mcp_forge.discovery.limits import MAX_TOOL_PARAMETERS, group_options
 from mcp_forge.models import (
     AuthScheme,
     AuthType,
@@ -160,6 +161,17 @@ class CLIAppDiscovery:
                 param_flags=flags,
             ))
 
+        # Au-delà de MAX_TOOL_PARAMETERS options (`git log` : 68 à la régénération du
+        # 2026-11-26), les facultatives vont dans un objet `options`, comme pour OpenAPI ; un
+        # tool qui reste au-delà est retiré, avec la raison
+        kept = []
+        for tool in tools:
+            if group_options(tool):
+                kept.append(tool)
+            else:
+                console.print(f"[yellow]  ⚠ {' '.join(tool.metadata.get('cmd', [tool.name]))} removed: more than "
+                              f"{MAX_TOOL_PARAMETERS} required or positional arguments[/yellow]")
+        tools = kept
         console.print(f"[green][OK] {len(tools)} MCP tool(s) extracted[/green]")
 
         auth_schemes = self._detect_auth(root_help)
@@ -490,14 +502,13 @@ class CLIAppDiscovery:
             if value_hint:
                 hint_clean = value_hint.strip("<>[]")
                 ptype = _VALUE_TYPE_MAP.get(hint_clean.upper(), ParameterType.STRING)
-                # Une valeur entre crochets — carrés `[...]` ou chevrons
-                # `<...>` — est optionnelle par convention ; seule une
-                # forme ALLCAPS nue (ex: "--output FILE") est traitée
-                # comme obligatoire dès que le flag est utilisé.
-                required = value_hint[0] not in "[<"
             else:
                 ptype = ParameterType.BOOLEAN
-                required = False
+            # Une option est toujours facultative (décision du PO du 2026-11-27). Une valeur
+            # en majuscules nues (« --output FILE ») est requise quand l'option est donnée,
+            # pas l'option elle-même : avant, le tool généré exigeait ce paramètre à chaque
+            # appel. Le serveur n'ajoute l'option qu'avec sa valeur (server_cli.py.j2).
+            required = False
 
             default = None
             dm = re.search(r"\(default[=:\s]+([^)]+)\)", description, re.IGNORECASE)

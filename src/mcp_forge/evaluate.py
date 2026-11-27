@@ -342,6 +342,10 @@ _SYSTEM_PROMPT = textwrap.dedent("""
         (criterion fidelity): the client may call it without confirmation. Missing annotations are "mineur"
         (criterion docs). Annotations are hints for the client, never a protection. The tool facts already
         list what was checked mechanically: do not repeat those findings.
+        Codebase and CLI tools run code whose side effects the server cannot see: readOnlyHint=False is the
+        deliberate default there, unless the name is a read verb (get, list, read…). Do not report
+        readOnlyHint=False on such a tool, even when the function looks purely computational (is_prime,
+        factorial, sum_list): it is not a defect.
     23. EXTERNAL CONTENT (OWASP MCP06): a tool that returns text from a web page or any third-party content
         to the LLM must mark it as untrusted data (delimiters, a reminder not to follow instructions found
         inside) and bound its length; otherwise a page can slip instructions to the LLM. Raw, unbounded
